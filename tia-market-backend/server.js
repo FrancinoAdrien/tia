@@ -59,7 +59,7 @@ app.get('/api/test', async (req, res) => {
       status: 'OK',
       timestamp: new Date().toISOString(),
       server: {
-        ip: '192.168.88.252',
+        ip: '192.168.88.43',
         port: 3001,
         environment: process.env.NODE_ENV || 'development'
       },
@@ -137,7 +137,7 @@ app.post('/api/register', async (req, res) => {
     // Générer token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252',
+      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.43',
       { expiresIn: '7d' }
     );
 
@@ -213,7 +213,7 @@ app.post('/api/login', async (req, res) => {
     // Générer token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252',
+      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.43',
       { expiresIn: '7d' }
     );
 
@@ -252,7 +252,7 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ error: 'Token d\'authentification manquant' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252', (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.43', (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Token invalide ou expiré' });
     }
@@ -311,16 +311,16 @@ app.listen(PORT, HOST, () => {
   console.log('='.repeat(60));
   console.log(`📡 Serveur: http://${HOST}:${PORT}`);
   console.log(`💻 Local: http://localhost:${PORT}`);
-  console.log(`📱 Mobile: http://192.168.88.252:${PORT}`);
+  console.log(`📱 Mobile: http://192.168.88.43:${PORT}`);
   console.log('='.repeat(60));
   console.log('🔗 Endpoints:');
-  console.log(`   🔍 Test: http://192.168.88.252:${PORT}/api/test`);
-  console.log(`   📝 Register: POST http://192.168.88.252:${PORT}/api/register`);
-  console.log(`   🔑 Login: POST http://192.168.88.252:${PORT}/api/login`);
+  console.log(`   🔍 Test: http://192.168.88.43:${PORT}/api/test`);
+  console.log(`   📝 Register: POST http://192.168.88.43:${PORT}/api/register`);
+  console.log(`   🔑 Login: POST http://192.168.88.43:${PORT}/api/login`);
   console.log('='.repeat(60));
   console.log('📱 Pour tester depuis votre téléphone:');
   console.log(`   1. Ouvrez Chrome sur votre téléphone`);
-  console.log(`   2. Allez à: http://192.168.88.252:${PORT}/api/test`);
+  console.log(`   2. Allez à: http://192.168.88.43:${PORT}/api/test`);
   console.log(`   3. Vous devriez voir "Backend TIA Market Opérationnel"`);
   console.log('='.repeat(60));
 });
@@ -948,7 +948,7 @@ app.listen(PORT, HOST, () => {
   console.log('='.repeat(60));
   console.log(`📡 Serveur: http://${HOST}:${PORT}`);
   console.log(`💻 Local: http://localhost:${PORT}`);
-  console.log(`📱 Mobile: http://192.168.88.252:${PORT}`);
+  console.log(`📱 Mobile: http://192.168.88.43:${PORT}`);
   console.log('='.repeat(60));
   console.log('🔗 Endpoints:');
   console.log(`   🔍 Test: GET /api/test`);
@@ -1669,6 +1669,67 @@ app.get('/api/ads/search', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Erreur lors de la recherche' 
+    });
+  }
+});
+
+const result = await pool.query(
+  `SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
+          u.is_verified, u.is_premium, u.created_at, up.city, up.avatar_url, up.bio
+   FROM users u
+   LEFT JOIN user_profiles up ON u.id = up.id
+   WHERE u.id = $1`,
+  [req.user.userId]
+);
+
+app.patch('/api/user/premium', authenticateToken, async (req, res) => {
+  try {
+    const { isPremium } = req.body;
+    
+    if (typeof isPremium !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        error: 'Le champ isPremium est requis et doit être un booléen'
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE users 
+       SET is_premium = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2
+       RETURNING id, email, first_name, last_name, phone, is_premium, is_verified, created_at`,
+      [isPremium, req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Utilisateur non trouvé'
+      });
+    }
+
+    const user = result.rows[0];
+    
+    res.json({
+      success: true,
+      message: isPremium ? 'Statut premium activé avec succès' : 'Statut premium désactivé',
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        isPremium: user.is_premium,
+        isVerified: user.is_verified,
+        createdAt: user.created_at,
+      }
+    });
+  } catch (error) {
+    console.error('❌ Erreur mise à jour statut premium:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la mise à jour du statut premium',
+      details: error.message
     });
   }
 });
