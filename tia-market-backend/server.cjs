@@ -59,7 +59,7 @@ app.get('/api/test', async (req, res) => {
       status: 'OK',
       timestamp: new Date().toISOString(),
       server: {
-        ip: '192.168.88.43',
+        ip: '192.168.88.252',
         port: 3001,
         environment: process.env.NODE_ENV || 'development'
       },
@@ -137,7 +137,7 @@ app.post('/api/register', async (req, res) => {
     // Générer token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.43',
+      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252',
       { expiresIn: '7d' }
     );
 
@@ -154,6 +154,7 @@ app.post('/api/register', async (req, res) => {
         lastName: user.last_name,
         phone: user.phone,
         isPremium: user.is_premium,
+        premiumPlan: null,
         endPremium: user.end_premium,
         createdAt: user.created_at,
       }
@@ -215,7 +216,7 @@ app.post('/api/login', async (req, res) => {
     // Générer token
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.43',
+      process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252',
       { expiresIn: '7d' }
     );
 
@@ -233,6 +234,7 @@ app.post('/api/login', async (req, res) => {
         phone: user.phone,
         isVerified: user.is_verified,
         isPremium: user.is_premium,
+        premiumPlan: user.premium_plan,
         endPremium: user.end_premium,
         createdAt: user.created_at,
       }
@@ -256,7 +258,7 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ error: 'Token d\'authentification manquant' });
   }
 
-  jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.43', (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252', (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Token invalide ou expiré' });
     }
@@ -270,7 +272,8 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
-              u.is_verified, u.created_at, up.city, up.avatar_url, up.bio
+              u.is_verified, u.is_premium, u.premium_plan, u.end_premium, u.created_at, 
+              up.city, up.avatar_url, up.bio
        FROM users u
        LEFT JOIN user_profiles up ON u.id = up.id
        WHERE u.id = $1`,
@@ -292,6 +295,7 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
         phone: user.phone,
         isVerified: user.is_verified,
         isPremium: user.is_premium,
+        premiumPlan: user.premium_plan,
         endPremium: user.end_premium,
         city: user.city,
         avatarUrl: user.avatar_url,
@@ -379,6 +383,11 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
     categoryId,
     city,
     postalCode,
+    quantity = 1, // Nouveau: quantité de produits
+    isFeatured = false, // À la une
+    featuredDays = 0, // 7 ou 14 jours
+    isUrgent = false, // Badge urgent
+    maxPhotos = 5, // Nombre de photos (peut être augmenté avec crédits)
   } = req.body;
 
   // Validation
@@ -400,12 +409,200 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Catégorie invalide' });
     }
 
+    // Récupérer le plan premium de l'utilisateur pour valider la quantité
+    const userCheck = await pool.query(
+      'SELECT premium_plan, is_premium FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur non trouvé' });
+    }
+
+    const user = userCheck.rows[0];
+    let maxQuantity = 1; // Par défaut pour les utilisateurs non premium
+    let maxPhotos = 5; // Par défaut
+
+    // Définir les limites selon le plan
+    if (user.is_premium && user.premium_plan) {
+      switch (user.premium_plan) {
+        case 'starter':
+          maxQuantity = 20;
+          maxPhotos = 10;
+          break;
+        case 'pro':
+          maxQuantity = 40;
+          maxPhotos = 20;
+          break;
+        case 'enterprise':
+          maxQuantity = 999999; // Illimité
+          maxPhotos = 999999; // Illimité
+          break;
+      }
+    }
+
+    // Valider la quantité
+    if (quantity < 1 || quantity > maxQuantity) {
+      return res.status(400).json({
+        error: `Quantité invalide. Maximum autorisé: ${maxQuantity}`,
+        maxQuantity: maxQuantity,
+        plan: user.premium_plan || 'standard',
+      });
+    }
+
+    // Gérer les fonctionnalités premium (À la une, Urgent, photos)
+    let featuredUntil = null;
+    let finalMaxPhotos = maxPhotos || 5;
+    let totalCost = 0;
+
+    // Vérifier les crédits de l'utilisateur
+    const userCreditsResult = await pool.query(
+      'SELECT credits FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+    const userCredits = parseFloat(userCreditsResult.rows[0]?.credits || 0);
+
+    // Gérer "À la une"
+    if (isFeatured && featuredDays > 0) {
+      const featuredCost = featuredDays === 7 ? 10000 : featuredDays === 14 ? 18000 : 0;
+      
+      if (featuredCost > 0) {
+        // Vérifier les crédits gratuits pour packs Pro/Entreprise
+        if (user.premium_plan === 'pro') {
+          const creditsResult = await pool.query(
+            'SELECT credits_remaining FROM user_featured_credits WHERE user_id = $1',
+            [req.user.userId]
+          );
+          
+          if (creditsResult.rows.length > 0 && creditsResult.rows[0].credits_remaining > 0) {
+            // Utiliser un crédit gratuit
+            await pool.query(
+              'UPDATE user_featured_credits SET credits_remaining = credits_remaining - 1 WHERE user_id = $1',
+              [req.user.userId]
+            );
+            featuredUntil = new Date();
+            featuredUntil.setDate(featuredUntil.getDate() + featuredDays);
+            console.log('✅ Crédit "À la une" gratuit utilisé');
+          } else if (userCredits >= featuredCost) {
+            // Payer avec crédits
+            await pool.query(
+              'UPDATE users SET credits = credits - $1 WHERE id = $2',
+              [featuredCost, req.user.userId]
+            );
+            totalCost += featuredCost;
+            featuredUntil = new Date();
+            featuredUntil.setDate(featuredUntil.getDate() + featuredDays);
+            
+            await pool.query(
+              `INSERT INTO credit_transactions (user_id, type, amount, description, status)
+               VALUES ($1, $2, $3, $4, 'completed')`,
+              [req.user.userId, featuredDays === 7 ? 'featured_7d' : 'featured_14d', featuredCost, `À la une ${featuredDays} jours`]
+            );
+          } else {
+            return res.status(400).json({
+              error: `Crédits insuffisants pour "À la une" ${featuredDays} jours. Coût: ${featuredCost} Ar`,
+              required: featuredCost,
+              available: userCredits,
+            });
+          }
+        } else if (user.premium_plan === 'enterprise') {
+          // Entreprise: illimité
+          featuredUntil = new Date();
+          featuredUntil.setDate(featuredUntil.getDate() + featuredDays);
+          console.log('✅ "À la une" gratuit pour pack Entreprise');
+        } else if (userCredits >= featuredCost) {
+          // Payer avec crédits
+          await pool.query(
+            'UPDATE users SET credits = credits - $1 WHERE id = $2',
+            [featuredCost, req.user.userId]
+          );
+          totalCost += featuredCost;
+          featuredUntil = new Date();
+          featuredUntil.setDate(featuredUntil.getDate() + featuredDays);
+          
+          await pool.query(
+            `INSERT INTO credit_transactions (user_id, type, amount, description, status)
+             VALUES ($1, $2, $3, $4, 'completed')`,
+            [req.user.userId, featuredDays === 7 ? 'featured_7d' : 'featured_14d', featuredCost, `À la une ${featuredDays} jours`]
+          );
+        } else {
+          return res.status(400).json({
+            error: `Crédits insuffisants pour "À la une" ${featuredDays} jours. Coût: ${featuredCost} Ar`,
+            required: featuredCost,
+            available: userCredits,
+          });
+        }
+      }
+    }
+
+    // Gérer "Urgent"
+    if (isUrgent) {
+      const urgentCost = 3000;
+      if (userCredits >= urgentCost) {
+        await pool.query(
+          'UPDATE users SET credits = credits - $1 WHERE id = $2',
+          [urgentCost, req.user.userId]
+        );
+        totalCost += urgentCost;
+        
+        await pool.query(
+          `INSERT INTO credit_transactions (user_id, type, amount, description, status)
+           VALUES ($1, 'urgent', $2, 'Badge Urgent', 'completed')`,
+          [req.user.userId, urgentCost]
+        );
+      } else {
+        return res.status(400).json({
+          error: `Crédits insuffisants pour le badge Urgent. Coût: ${urgentCost} Ar`,
+          required: urgentCost,
+          available: userCredits,
+        });
+      }
+    }
+
+    // Gérer photos supplémentaires
+    if (maxPhotos > 5) {
+      let extraPhotosCost = 0;
+      if (maxPhotos === 10) {
+        extraPhotosCost = 2000; // 5 photos supplémentaires
+      } else if (maxPhotos === 20) {
+        extraPhotosCost = 4000; // 15 photos supplémentaires
+      }
+      
+      if (extraPhotosCost > 0) {
+        if (userCredits >= extraPhotosCost) {
+          await pool.query(
+            'UPDATE users SET credits = credits - $1 WHERE id = $2',
+            [extraPhotosCost, req.user.userId]
+          );
+          totalCost += extraPhotosCost;
+          finalMaxPhotos = maxPhotos;
+          
+          await pool.query(
+            `INSERT INTO credit_transactions (user_id, type, amount, description, status)
+             VALUES ($1, $2, $3, $4, 'completed')`,
+            [req.user.userId, maxPhotos === 10 ? 'extra_photos_5' : 'extra_photos_15', extraPhotosCost, `${maxPhotos} photos`]
+          );
+        } else {
+          return res.status(400).json({
+            error: `Crédits insuffisants pour ${maxPhotos} photos. Coût: ${extraPhotosCost} Ar`,
+            required: extraPhotosCost,
+            available: userCredits,
+          });
+        }
+      }
+    }
+
+    // Calculer la date d'expiration (30 jours par défaut)
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 30);
+
     // Insérer l'annonce
     const result = await pool.query(
       `INSERT INTO ads (
         user_id, category_id, title, description, price, 
-        price_negotiable, condition, city, postal_code
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        price_negotiable, condition, city, postal_code, quantity, sold_quantity,
+        is_featured, is_urgent, featured_until, expires_at, max_photos
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *`,
       [
         req.user.userId,
@@ -417,16 +614,24 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
         condition,
         city,
         postalCode || null,
+        quantity,
+        0, // sold_quantity initialisé à 0
+        isFeatured || false,
+        isUrgent || false,
+        featuredUntil,
+        expiresAt,
+        finalMaxPhotos,
       ]
     );
 
     const ad = result.rows[0];
 
-    console.log('✅ Annonce créée ID:', ad.id);
+    console.log('✅ Annonce créée ID:', ad.id, 'Quantité:', quantity, 'Coût total:', totalCost);
     
     res.status(201).json({
       success: true,
       message: 'Annonce créée avec succès',
+      totalCost: totalCost,
       ad: {
         id: ad.id,
         title: ad.title,
@@ -438,10 +643,16 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
         postalCode: ad.postal_code,
         categoryId: ad.category_id,
         userId: ad.user_id,
+        quantity: ad.quantity || 1,
+        soldQuantity: ad.sold_quantity || 0,
         createdAt: ad.created_at,
         isActive: ad.is_active,
         isSold: ad.is_sold,
-        isFeatured: ad.is_featured,
+        isFeatured: ad.is_featured || false,
+        isUrgent: ad.is_urgent || false,
+        featuredUntil: ad.featured_until,
+        expiresAt: ad.expires_at,
+        maxPhotos: ad.max_photos || 5,
         viewCount: ad.view_count,
       }
     });
@@ -1702,30 +1913,29 @@ app.get('/api/ads/search', async (req, res) => {
   }
 });
 
-// Mettre à jour le premium
+// Mettre à jour le premium avec les nouveaux plans
 app.patch('/api/user/premium', authenticateToken, async (req, res) => {
   try {
     const { plan } = req.body;
 
-    if (!plan || !['monthly', 'annual'].includes(plan)) {
+    if (!plan || !['starter', 'pro', 'enterprise'].includes(plan)) {
       return res.status(400).json({
         success: false,
-        error: 'Plan invalide',
+        error: 'Plan invalide. Plans disponibles: starter, pro, enterprise',
       });
     }
 
-    // Calculer la date d'expiration
-    const daysToAdd = plan === 'monthly' ? 30 : 365;
+    // Calculer la date d'expiration (30 jours pour tous les plans)
     const endPremiumDate = new Date();
-    endPremiumDate.setDate(endPremiumDate.getDate() + daysToAdd);
+    endPremiumDate.setDate(endPremiumDate.getDate() + 30);
 
     // Mettre à jour l'utilisateur
     const result = await pool.query(
       `UPDATE users 
-       SET is_premium = true, end_premium = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $2
-       RETURNING id, email, first_name, last_name, phone, is_verified, is_premium, end_premium, created_at`,
-      [endPremiumDate, req.user.userId]
+       SET is_premium = true, premium_plan = $1, end_premium = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING id, email, first_name, last_name, phone, is_verified, is_premium, premium_plan, end_premium, created_at`,
+      [plan, endPremiumDate, req.user.userId]
     );
 
     if (result.rows.length === 0) {
@@ -1733,11 +1943,11 @@ app.patch('/api/user/premium', authenticateToken, async (req, res) => {
     }
 
     const user = result.rows[0];
-    console.log('✅ Utilisateur passé en premium:', user.email);
+    console.log('✅ Utilisateur passé en premium:', user.email, 'Plan:', plan);
 
     res.json({
       success: true,
-      message: 'Abonnement premium activé',
+      message: `Abonnement premium ${plan} activé`,
       user: {
         id: user.id,
         email: user.email,
@@ -1746,6 +1956,7 @@ app.patch('/api/user/premium', authenticateToken, async (req, res) => {
         phone: user.phone,
         isVerified: user.is_verified,
         isPremium: user.is_premium,
+        premiumPlan: user.premium_plan,
         endPremium: user.end_premium,
         createdAt: user.created_at,
       },
@@ -1755,6 +1966,606 @@ app.patch('/api/user/premium', authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Erreur lors de la mise à jour du premium',
+      details: error.message,
+    });
+  }
+});
+
+// ============================================================
+// ENDPOINTS POUR LES POINTS ET CRÉDITS
+// ============================================================
+
+// GET /api/user/points - Récupérer les points et crédits de l'utilisateur
+app.get('/api/user/points', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    const result = await pool.query(
+      `SELECT points, credits FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Utilisateur non trouvé'
+      });
+    }
+
+    const user = result.rows[0];
+
+    // Récupérer l'historique des points récents
+    const historyResult = await pool.query(
+      `SELECT * FROM user_points_history 
+       WHERE user_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 10`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      points: parseInt(user.points) || 0,
+      credits: parseFloat(user.credits) || 0,
+      history: historyResult.rows.map(h => ({
+        id: h.id,
+        points: h.points,
+        type: h.type,
+        description: h.description,
+        createdAt: h.created_at,
+      })),
+    });
+  } catch (error) {
+    console.error('❌ Erreur récupération points:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la récupération des points',
+      details: error.message,
+    });
+  }
+});
+
+// POST /api/user/points/daily-login - Ajouter des points pour connexion quotidienne
+app.post('/api/user/points/daily-login', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Vérifier si l'utilisateur a déjà reçu des points aujourd'hui
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const checkResult = await pool.query(
+      `SELECT id FROM user_points_history 
+       WHERE user_id = $1 
+       AND type = 'daily_login' 
+       AND created_at >= $2`,
+      [userId, today]
+    );
+
+    if (checkResult.rows.length > 0) {
+      return res.json({
+        success: true,
+        message: 'Points déjà attribués aujourd\'hui',
+        points: 0,
+      });
+    }
+
+    // Ajouter 1 point
+    await pool.query(
+      `UPDATE users SET points = points + 1 WHERE id = $1`,
+      [userId]
+    );
+
+    await pool.query(
+      `INSERT INTO user_points_history (user_id, points, type, description)
+       VALUES ($1, 1, 'daily_login', 'Connexion quotidienne')`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      message: '1 point ajouté pour la connexion quotidienne',
+      points: 1,
+    });
+  } catch (error) {
+    console.error('❌ Erreur ajout points connexion:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de l\'ajout des points',
+    });
+  }
+});
+
+// POST /api/user/points/claim-reward - Échanger des points contre des récompenses
+app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) => {
+  try {
+    const { rewardType } = req.body; // 'credit_5000', 'starter_1m', 'pro_1m', 'pro_3m', 'enterprise_1m'
+    const userId = req.user.userId;
+
+    // Récupérer les points actuels
+    const userResult = await pool.query(
+      'SELECT points, credits FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Utilisateur non trouvé'
+      });
+    }
+
+    const user = userResult.rows[0];
+    const currentPoints = parseInt(user.points) || 0;
+
+    let pointsRequired = 0;
+    let rewardDescription = '';
+    let action = null;
+
+    switch (rewardType) {
+      case 'credit_5000':
+        pointsRequired = 100;
+        rewardDescription = '5 000 Ar de crédit';
+        action = async () => {
+          await pool.query(
+            'UPDATE users SET credits = credits + 5000 WHERE id = $1',
+            [userId]
+          );
+        };
+        break;
+      case 'starter_1m':
+        pointsRequired = 300;
+        rewardDescription = '1 mois Pack Starter gratuit';
+        action = async () => {
+          const endDate = new Date();
+          endDate.setMonth(endDate.getMonth() + 1);
+          await pool.query(
+            `UPDATE users 
+             SET is_premium = true, premium_plan = 'starter', end_premium = $1 
+             WHERE id = $2`,
+            [endDate, userId]
+          );
+        };
+        break;
+      case 'pro_1m':
+        pointsRequired = 500;
+        rewardDescription = '1 mois Pack Pro gratuit';
+        action = async () => {
+          const endDate = new Date();
+          endDate.setMonth(endDate.getMonth() + 1);
+          await pool.query(
+            `UPDATE users 
+             SET is_premium = true, premium_plan = 'pro', end_premium = $1 
+             WHERE id = $2`,
+            [endDate, userId]
+          );
+          // Ajouter 5 crédits "À la une"
+          await pool.query(
+            `INSERT INTO user_featured_credits (user_id, credits_remaining, last_reset_date)
+             VALUES ($1, 5, CURRENT_DATE)
+             ON CONFLICT (user_id) 
+             DO UPDATE SET credits_remaining = 5, last_reset_date = CURRENT_DATE`,
+            [userId]
+          );
+        };
+        break;
+      case 'pro_3m':
+        pointsRequired = 1000;
+        rewardDescription = '3 mois Pack Pro gratuit';
+        action = async () => {
+          const endDate = new Date();
+          endDate.setMonth(endDate.getMonth() + 3);
+          await pool.query(
+            `UPDATE users 
+             SET is_premium = true, premium_plan = 'pro', end_premium = $1 
+             WHERE id = $2`,
+            [endDate, userId]
+          );
+          await pool.query(
+            `INSERT INTO user_featured_credits (user_id, credits_remaining, last_reset_date)
+             VALUES ($1, 5, CURRENT_DATE)
+             ON CONFLICT (user_id) 
+             DO UPDATE SET credits_remaining = 5, last_reset_date = CURRENT_DATE`,
+            [userId]
+          );
+        };
+        break;
+      case 'enterprise_1m':
+        pointsRequired = 1000;
+        rewardDescription = '1 mois Pack Entreprise gratuit';
+        action = async () => {
+          const endDate = new Date();
+          endDate.setMonth(endDate.getMonth() + 1);
+          await pool.query(
+            `UPDATE users 
+             SET is_premium = true, premium_plan = 'enterprise', end_premium = $1 
+             WHERE id = $2`,
+            [endDate, userId]
+          );
+        };
+        break;
+      default:
+        return res.status(400).json({
+          success: false,
+          error: 'Type de récompense invalide'
+        });
+    }
+
+    if (currentPoints < pointsRequired) {
+      return res.status(400).json({
+        success: false,
+        error: `Points insuffisants. Requis: ${pointsRequired}, Disponibles: ${currentPoints}`,
+      });
+    }
+
+    // Déduire les points et appliquer la récompense
+    await pool.query(
+      'UPDATE users SET points = points - $1 WHERE id = $2',
+      [pointsRequired, userId]
+    );
+
+    await pool.query(
+      `INSERT INTO user_points_history (user_id, points, type, description)
+       VALUES ($1, -$2, 'reward_claimed', 'Échange: ${rewardDescription}')`,
+      [userId, pointsRequired]
+    );
+
+    if (action) {
+      await action();
+    }
+
+    res.json({
+      success: true,
+      message: `Récompense obtenue: ${rewardDescription}`,
+      pointsUsed: pointsRequired,
+      remainingPoints: currentPoints - pointsRequired,
+    });
+  } catch (error) {
+    console.error('❌ Erreur échange points:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de l\'échange de points',
+      details: error.message,
+    });
+  }
+});
+
+// GET /api/user/featured-credits - Récupérer les crédits "À la une" gratuits
+app.get('/api/user/featured-credits', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Vérifier le plan premium
+    const userResult = await pool.query(
+      'SELECT premium_plan FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Utilisateur non trouvé'
+      });
+    }
+
+    const premiumPlan = userResult.rows[0].premium_plan;
+
+    if (premiumPlan === 'enterprise') {
+      return res.json({
+        success: true,
+        creditsRemaining: 999999, // Illimité
+        isUnlimited: true,
+      });
+    }
+
+    if (premiumPlan === 'pro') {
+      // Récupérer ou créer les crédits
+      let creditsResult = await pool.query(
+        'SELECT * FROM user_featured_credits WHERE user_id = $1',
+        [userId]
+      );
+
+      if (creditsResult.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO user_featured_credits (user_id, credits_remaining, last_reset_date)
+           VALUES ($1, 5, CURRENT_DATE)`,
+          [userId]
+        );
+        creditsResult = await pool.query(
+          'SELECT * FROM user_featured_credits WHERE user_id = $1',
+          [userId]
+        );
+      }
+
+      const credits = creditsResult.rows[0];
+      const lastReset = new Date(credits.last_reset_date);
+      const now = new Date();
+      
+      // Réinitialiser si nouveau mois
+      if (now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
+        await pool.query(
+          `UPDATE user_featured_credits 
+           SET credits_remaining = 5, last_reset_date = CURRENT_DATE 
+           WHERE user_id = $1`,
+          [userId]
+        );
+        return res.json({
+          success: true,
+          creditsRemaining: 5,
+          isUnlimited: false,
+        });
+      }
+
+      return res.json({
+        success: true,
+        creditsRemaining: parseInt(credits.credits_remaining) || 0,
+        isUnlimited: false,
+      });
+    }
+
+    res.json({
+      success: true,
+      creditsRemaining: 0,
+      isUnlimited: false,
+    });
+  } catch (error) {
+    console.error('❌ Erreur récupération crédits:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la récupération des crédits',
+    });
+  }
+});
+
+// ============================================================
+// ENDPOINTS POUR LE WALLET (Compte fictif)
+// ============================================================
+
+// GET /api/wallet - Récupérer le solde du wallet
+app.get('/api/wallet', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // Récupérer ou créer le wallet
+    let walletResult = await pool.query(
+      'SELECT * FROM wallet WHERE user_id = $1',
+      [userId]
+    );
+
+    if (walletResult.rows.length === 0) {
+      // Créer le wallet s'il n'existe pas
+      await pool.query(
+        'INSERT INTO wallet (user_id, balance) VALUES ($1, 0.00)',
+        [userId]
+      );
+      walletResult = await pool.query(
+        'SELECT * FROM wallet WHERE user_id = $1',
+        [userId]
+      );
+    }
+
+    const wallet = walletResult.rows[0];
+
+    res.json({
+      success: true,
+      wallet: {
+        id: wallet.id,
+        balance: parseFloat(wallet.balance),
+        createdAt: wallet.created_at,
+        updatedAt: wallet.updated_at,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Erreur récupération wallet:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la récupération du wallet',
+      details: error.message,
+    });
+  }
+});
+
+// POST /api/wallet/deposit - Ajouter de l'argent au wallet (mode beta)
+app.post('/api/wallet/deposit', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user.userId;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Montant invalide',
+      });
+    }
+
+    // Récupérer ou créer le wallet
+    let walletResult = await pool.query(
+      'SELECT * FROM wallet WHERE user_id = $1',
+      [userId]
+    );
+
+    if (walletResult.rows.length === 0) {
+      await pool.query(
+        'INSERT INTO wallet (user_id, balance) VALUES ($1, 0.00)',
+        [userId]
+      );
+      walletResult = await pool.query(
+        'SELECT * FROM wallet WHERE user_id = $1',
+        [userId]
+      );
+    }
+
+    const wallet = walletResult.rows[0];
+
+    // Mettre à jour le solde
+    await pool.query(
+      'UPDATE wallet SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [amount, wallet.id]
+    );
+
+    // Créer une transaction
+    await pool.query(
+      `INSERT INTO wallet_transactions (wallet_id, user_id, type, amount, description, status)
+       VALUES ($1, $2, 'deposit', $3, 'Dépôt fictif (Mode Beta)', 'completed')`,
+      [wallet.id, userId, amount]
+    );
+
+    // Récupérer le nouveau solde
+    const newWallet = await pool.query(
+      'SELECT * FROM wallet WHERE id = $1',
+      [wallet.id]
+    );
+
+    console.log('✅ Dépôt effectué:', amount, 'pour user:', userId);
+
+    res.json({
+      success: true,
+      message: 'Dépôt effectué avec succès',
+      wallet: {
+        id: newWallet.rows[0].id,
+        balance: parseFloat(newWallet.rows[0].balance),
+      },
+    });
+  } catch (error) {
+    console.error('❌ Erreur dépôt wallet:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors du dépôt',
+      details: error.message,
+    });
+  }
+});
+
+// POST /api/wallet/withdraw - Retirer de l'argent du wallet
+app.post('/api/wallet/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const userId = req.user.userId;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Montant invalide',
+      });
+    }
+
+    // Récupérer le wallet
+    const walletResult = await pool.query(
+      'SELECT * FROM wallet WHERE user_id = $1',
+      [userId]
+    );
+
+    if (walletResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Wallet non trouvé',
+      });
+    }
+
+    const wallet = walletResult.rows[0];
+    const currentBalance = parseFloat(wallet.balance);
+
+    if (currentBalance < amount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Solde insuffisant',
+        currentBalance: currentBalance,
+      });
+    }
+
+    // Mettre à jour le solde
+    await pool.query(
+      'UPDATE wallet SET balance = balance - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [amount, wallet.id]
+    );
+
+    // Créer une transaction
+    await pool.query(
+      `INSERT INTO wallet_transactions (wallet_id, user_id, type, amount, description, status)
+       VALUES ($1, $2, 'withdrawal', $3, 'Retrait (Mode Beta)', 'completed')`,
+      [wallet.id, userId, amount]
+    );
+
+    // Récupérer le nouveau solde
+    const newWallet = await pool.query(
+      'SELECT * FROM wallet WHERE id = $1',
+      [wallet.id]
+    );
+
+    console.log('✅ Retrait effectué:', amount, 'pour user:', userId);
+
+    res.json({
+      success: true,
+      message: 'Retrait effectué avec succès',
+      wallet: {
+        id: newWallet.rows[0].id,
+        balance: parseFloat(newWallet.rows[0].balance),
+      },
+    });
+  } catch (error) {
+    console.error('❌ Erreur retrait wallet:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors du retrait',
+      details: error.message,
+    });
+  }
+});
+
+// GET /api/wallet/transactions - Récupérer l'historique des transactions
+app.get('/api/wallet/transactions', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    // Récupérer le wallet
+    const walletResult = await pool.query(
+      'SELECT id FROM wallet WHERE user_id = $1',
+      [userId]
+    );
+
+    if (walletResult.rows.length === 0) {
+      return res.json({
+        success: true,
+        transactions: [],
+        total: 0,
+      });
+    }
+
+    const walletId = walletResult.rows[0].id;
+
+    // Récupérer les transactions
+    const transactionsResult = await pool.query(
+      `SELECT * FROM wallet_transactions
+       WHERE wallet_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [walletId, limit, offset]
+    );
+
+    const countResult = await pool.query(
+      'SELECT COUNT(*) as total FROM wallet_transactions WHERE wallet_id = $1',
+      [walletId]
+    );
+
+    res.json({
+      success: true,
+      transactions: transactionsResult.rows.map(t => ({
+        id: t.id,
+        type: t.type,
+        amount: parseFloat(t.amount),
+        description: t.description,
+        status: t.status,
+        createdAt: t.created_at,
+      })),
+      total: parseInt(countResult.rows[0].total),
+    });
+  } catch (error) {
+    console.error('❌ Erreur récupération transactions:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la récupération des transactions',
       details: error.message,
     });
   }
@@ -2147,16 +2958,26 @@ app.post('/api/bookings', authenticateToken, async (req, res) => {
     const sellerId = adCheck.rows[0].user_id;
     const adTitle = adCheck.rows[0].title;
 
-    // Vérifier qu'il n'y a pas déjà une réservation acceptée pour cette annonce
-    const acceptedBooking = await pool.query(
-      'SELECT id FROM bookings WHERE ad_id = $1 AND status = \'accepted\'',
+    // Vérifier la quantité disponible
+    const adQuantityCheck = await pool.query(
+      'SELECT quantity, sold_quantity, is_sold FROM ads WHERE id = $1',
       [adId]
     );
 
-    if (acceptedBooking.rows.length > 0) {
+    if (adQuantityCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Annonce non trouvée'
+      });
+    }
+
+    const adQuantity = adQuantityCheck.rows[0];
+    const availableQuantity = (adQuantity.quantity || 1) - (adQuantity.sold_quantity || 0);
+
+    if (availableQuantity <= 0 || adQuantity.is_sold) {
       return res.status(400).json({
         success: false,
-        error: 'Cette annonce a déjà une réservation acceptée. Les nouvelles réservations ne sont plus possibles.'
+        error: 'Cette annonce est épuisée. Tous les produits ont été réservés.'
       });
     }
 
@@ -2466,7 +3287,10 @@ app.patch('/api/bookings/:id/deliver', authenticateToken, async (req, res) => {
 
     // Vérifier que c'est le vendeur qui confirme la livraison
     const bookingCheck = await pool.query(
-      'SELECT seller_id, buyer_id, status FROM bookings WHERE id = $1',
+      `SELECT b.seller_id, b.buyer_id, b.status, u.phone as seller_phone
+       FROM bookings b
+       JOIN users u ON b.seller_id = u.id
+       WHERE b.id = $1`,
       [id]
     );
 
@@ -2486,19 +3310,20 @@ app.patch('/api/bookings/:id/deliver', authenticateToken, async (req, res) => {
       });
     }
 
-    // Mettre à jour le statut à 'delivered' (on utilisera 'paid' comme statut temporaire, ou on peut ajouter 'delivered')
-    // Pour l'instant, on va utiliser un statut personnalisé dans payment_method pour indiquer la livraison
+    // Mettre à jour le statut à 'delivered' et enregistrer le numéro du vendeur
     await pool.query(
       `UPDATE bookings 
-       SET status = 'delivered', updated_at = CURRENT_TIMESTAMP 
-       WHERE id = $1`,
-      [id]
+       SET status = 'delivered', 
+           seller_phone = $1,
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2`,
+      [booking.seller_phone || null, id]
     );
 
     // Notifier l'acheteur que la livraison est confirmée
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
-       VALUES ($1, 'delivery_confirmed', 'Livraison confirmée', 'La livraison a été confirmée. Vous pouvez maintenant procéder au paiement.', $2, false)`,
+       VALUES ($1, 'delivery_confirmed', 'Livraison confirmée', 'La livraison a été confirmée. Veuillez confirmer la réception puis procéder au paiement.', $2, false)`,
       [booking.buyer_id, id]
     );
 
@@ -2506,27 +3331,90 @@ app.patch('/api/bookings/:id/deliver', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Livraison confirmée. L\'acheteur peut maintenant procéder au paiement.'
+      message: 'Livraison confirmée. L\'acheteur doit confirmer la réception puis procéder au paiement.'
     });
   } catch (error) {
     console.error('❌ Erreur confirmation livraison:', error);
+    console.error('Détails:', error.message);
     res.status(500).json({
       success: false,
-      error: 'Erreur lors de la confirmation de la livraison'
+      error: 'Erreur lors de la confirmation de la livraison',
+      details: error.message
     });
   }
 });
 
-// PATCH /api/bookings/:id/payment - Simuler le paiement (seulement si delivered)
+// PATCH /api/bookings/:id/confirm-delivery - Confirmer la réception (acheteur)
+app.patch('/api/bookings/:id/confirm-delivery', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const buyerId = req.user.userId;
+
+    // Vérifier que c'est l'acheteur qui confirme la réception
+    const bookingCheck = await pool.query(
+      'SELECT buyer_id, seller_id, status FROM bookings WHERE id = $1',
+      [id]
+    );
+
+    if (bookingCheck.rows.length === 0 || bookingCheck.rows[0].buyer_id !== buyerId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Non autorisé à confirmer la réception pour cette réservation'
+      });
+    }
+
+    const booking = bookingCheck.rows[0];
+
+    if (booking.status !== 'delivered') {
+      return res.status(400).json({
+        success: false,
+        error: 'La livraison doit être confirmée par le vendeur avant de confirmer la réception'
+      });
+    }
+
+    // Mettre à jour le statut à 'delivery_confirmed'
+    await pool.query(
+      `UPDATE bookings 
+       SET status = 'delivery_confirmed', updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1`,
+      [id]
+    );
+
+    // Notifier le vendeur que la réception est confirmée
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
+       VALUES ($1, 'delivery_received', 'Réception confirmée', 'Le client a confirmé la réception. Le paiement peut maintenant être effectué.', $2, false)`,
+      [booking.seller_id, id]
+    );
+
+    console.log('✅ Réception confirmée pour réservation:', id);
+
+    res.json({
+      success: true,
+      message: 'Réception confirmée. Vous pouvez maintenant procéder au paiement.'
+    });
+  } catch (error) {
+    console.error('❌ Erreur confirmation réception:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la confirmation de la réception'
+    });
+  }
+});
+
+// PATCH /api/bookings/:id/payment - Simuler le paiement Mobile Money (seulement si delivery_confirmed)
 app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { paymentMethod } = req.body;
+    const { paymentMethod, buyerPhone, transactionCode } = req.body;
     const buyerId = req.user.userId;
 
     // Vérifier que c'est l'acheteur qui paie
     const bookingCheck = await pool.query(
-      'SELECT buyer_id, seller_id, ad_id, status FROM bookings WHERE id = $1',
+      `SELECT b.buyer_id, b.seller_id, b.ad_id, b.status, b.seller_phone, u.phone as buyer_phone_db
+       FROM bookings b
+       JOIN users u ON b.buyer_id = u.id
+       WHERE b.id = $1`,
       [id]
     );
 
@@ -2539,11 +3427,11 @@ app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
 
     const booking = bookingCheck.rows[0];
 
-    // Vérifier que la livraison a été confirmée
-    if (booking.status !== 'delivered') {
+    // Vérifier que la réception a été confirmée
+    if (booking.status !== 'delivery_confirmed') {
       return res.status(400).json({
         success: false,
-        error: 'Le paiement n\'est possible qu\'après confirmation de la livraison par le vendeur'
+        error: 'Le paiement n\'est possible qu\'après confirmation de la réception de la livraison'
       });
     }
 
@@ -2554,9 +3442,24 @@ app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
       });
     }
 
-    // Simulation du paiement (2 secondes)
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (paymentMethod === 'mobile_money' && (!buyerPhone || !transactionCode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Numéro de téléphone et code de transaction requis pour Mobile Money'
+      });
+    }
 
+    if (!booking.seller_phone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le numéro de téléphone du vendeur n\'est pas disponible'
+      });
+    }
+
+    // Simulation du paiement Mobile Money (3 secondes)
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Mettre à jour le statut à 'paid'
     await pool.query(
       `UPDATE bookings 
        SET status = 'paid', 
@@ -2567,24 +3470,64 @@ app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
       [paymentMethod, id]
     );
 
+    // Incrémenter sold_quantity et vérifier si l'annonce est épuisée
+    const adUpdateResult = await pool.query(
+      `UPDATE ads 
+       SET sold_quantity = sold_quantity + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING quantity, sold_quantity`,
+      [booking.ad_id]
+    );
+
+    if (adUpdateResult.rows.length > 0) {
+      const ad = adUpdateResult.rows[0];
+      const totalQuantity = ad.quantity || 1;
+      const soldQuantity = ad.sold_quantity || 0;
+
+      // Si toutes les quantités sont vendues, marquer l'annonce comme vendue
+      if (soldQuantity >= totalQuantity) {
+        await pool.query(
+          `UPDATE ads 
+           SET is_sold = true, 
+               is_active = false,
+               updated_at = CURRENT_TIMESTAMP 
+           WHERE id = $1`,
+          [booking.ad_id]
+        );
+      }
+    }
+
+    // Mettre à jour le statut de la réservation à 'completed'
+    await pool.query(
+      `UPDATE bookings 
+       SET status = 'completed', 
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1`,
+      [id]
+    );
+
     // Notifier le vendeur
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
-       VALUES ($1, 'payment_received', 'Paiement reçu', 'Le paiement a été reçu pour votre annonce', $2, false)`,
-      [booking.seller_id, id]
+       VALUES ($1, 'payment_received', 'Paiement reçu', 'Le paiement Mobile Money a été reçu. Transaction: ' || $3, $2, false)`,
+      [booking.seller_id, id, transactionCode || 'N/A']
     );
 
-    console.log('✅ Paiement effectué pour réservation:', id);
+    console.log('✅ Paiement Mobile Money effectué pour réservation:', id);
 
     res.json({
       success: true,
-      message: 'Paiement effectué avec succès'
+      message: 'Paiement effectué avec succès',
+      transactionCode: transactionCode,
+      sellerPhone: booking.seller_phone
     });
   } catch (error) {
     console.error('❌ Erreur paiement:', error);
     res.status(500).json({
       success: false,
-      error: 'Erreur lors du paiement'
+      error: 'Erreur lors du paiement',
+      details: error.message
     });
   }
 });
@@ -2598,7 +3541,25 @@ app.listen(PORT, HOST, () => {
   console.log('='.repeat(60));
   console.log(`📡 Serveur: http://${HOST}:${PORT}`);
   console.log(`💻 Local: http://localhost:${PORT}`);
-  console.log(`📱 Mobile: http://192.168.88.43:${PORT}`);
+  // Détecter l'IP automatiquement si possible
+  const os = require('os');
+  const networkInterfaces = os.networkInterfaces();
+  let detectedIP = '192.168.88.252'; // IP par défaut
+  
+  // Chercher une IP locale
+  for (const interfaceName in networkInterfaces) {
+    const addresses = networkInterfaces[interfaceName];
+    for (const addr of addresses) {
+      if (addr.family === 'IPv4' && !addr.internal && addr.address.startsWith('192.168.')) {
+        detectedIP = addr.address;
+        break;
+      }
+    }
+    if (detectedIP !== '192.168.88.252') break;
+  }
+  
+  console.log(`📱 Mobile: http://${detectedIP}:${PORT}`);
+  console.log(`⚠️  Si l'IP est différente, mettez à jour tia-market/utils/config.ts`);
   console.log('='.repeat(60));
   console.log('🔗 Endpoints:');
   console.log(`   🔍 Test: GET /api/test`);
