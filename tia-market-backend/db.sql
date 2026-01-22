@@ -16,10 +16,12 @@ CREATE TABLE users (
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     phone VARCHAR(20),
+    is_premium BOOLEAN DEFAULT FALSE,
     is_verified BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    end_premium TIMESTAMP
 );
 
 -- Table des profils utilisateurs
@@ -90,33 +92,6 @@ CREATE TABLE favorites (
     FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE CASCADE
 );
 
--- Table des messages (améliorée)
-CREATE TABLE messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sender_id UUID NOT NULL,
-    receiver_id UUID NOT NULL,
-    ad_id UUID,
-    content TEXT NOT NULL,
-    is_read BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (sender_id) REFERENCES users(id),
-    FOREIGN KEY (receiver_id) REFERENCES users(id),
-    FOREIGN KEY (ad_id) REFERENCES ads(id)
-);
-
--- Table des conversations (nouvelle)
-CREATE TABLE conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    ad_id UUID,
-    user1_id UUID NOT NULL,
-    user2_id UUID NOT NULL,
-    last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE CASCADE,
-    FOREIGN KEY (user1_id) REFERENCES users(id),
-    FOREIGN KEY (user2_id) REFERENCES users(id)
-);
-
 -- Table des recherches sauvegardées (nouvelle)
 CREATE TABLE saved_searches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -125,19 +100,6 @@ CREATE TABLE saved_searches (
     query TEXT NOT NULL,
     filters JSONB,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
--- Table des notifications (nouvelle)
-CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
-    type VARCHAR(50) NOT NULL,
-    title VARCHAR(255) NOT NULL,
-    message TEXT NOT NULL,
-    data JSONB,
-    is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -167,8 +129,8 @@ CREATE TABLE transactions (
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'completed', 'cancelled')),
     meeting_location TEXT,
     meeting_time TIMESTAMP,
-    rating_from_buyer INTEGER CHECK (rating >= 1 AND rating <= 5),
-    rating_from_seller INTEGER CHECK (rating >= 1 AND rating <= 5),
+    rating_from_buyer INTEGER CHECK (rating_from_buyer IS NULL OR (rating_from_buyer >= 1 AND rating_from_buyer <= 5)),
+    rating_from_seller INTEGER CHECK (rating_from_seller IS NULL OR (rating_from_seller >= 1 AND rating_from_seller <= 5)),
     review_from_buyer TEXT,
     review_from_seller TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -176,6 +138,97 @@ CREATE TABLE transactions (
     FOREIGN KEY (ad_id) REFERENCES ads(id),
     FOREIGN KEY (buyer_id) REFERENCES users(id),
     FOREIGN KEY (seller_id) REFERENCES users(id)
+);
+
+-- Table conversations
+CREATE TABLE conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ad_id UUID,
+    user1_id UUID NOT NULL,
+    user2_id UUID NOT NULL,
+    last_message_content TEXT,
+    last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    user1_unread_count INTEGER DEFAULT 0,
+    user2_unread_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE CASCADE,
+    FOREIGN KEY (user1_id) REFERENCES users(id),
+    FOREIGN KEY (user2_id) REFERENCES users(id),
+    UNIQUE(ad_id, user1_id, user2_id)
+);
+
+-- Table messages (version améliorée avec conversation_id)
+CREATE TABLE messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL,
+    sender_id UUID NOT NULL,
+    content TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id) REFERENCES users(id)
+);
+
+-- Table des notifications (version améliorée avec related_id pour bookings)
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    related_id UUID,
+    data JSONB,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Table pour les annonces de réservation (restaurants, hôtels)
+CREATE TABLE reservation_ads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    type VARCHAR(50) NOT NULL, -- 'restaurant', 'hotel', 'other'
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    price_per_unit DECIMAL(10, 2),
+    unit_type VARCHAR(50), -- 'per_person', 'per_room', 'per_service'
+    available_from_date DATE,
+    available_to_date DATE,
+    is_open_24h BOOLEAN DEFAULT FALSE,
+    opening_time VARCHAR(5), -- HH:MM format
+    closing_time VARCHAR(5), -- HH:MM format
+    capacity INTEGER,
+    phone VARCHAR(20),
+    email VARCHAR(255),
+    website VARCHAR(255),
+    location VARCHAR(255),
+    latitude DECIMAL(10,8),
+    longitude DECIMAL(11,8),
+    features JSONB DEFAULT '[]', -- Array of feature strings: 'WiFi', 'Parking', 'Climatisation', etc.
+    images JSONB DEFAULT '[]', -- Array of image URLs
+    is_active BOOLEAN DEFAULT TRUE,
+    view_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Table des réservations d'annonces (Booking System)
+CREATE TABLE bookings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ad_id UUID NOT NULL,
+    buyer_id UUID NOT NULL,
+    seller_id UUID NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'paid', 'completed', 'cancelled')),
+    message TEXT,
+    payment_method VARCHAR(50),
+    payment_date TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE CASCADE,
+    FOREIGN KEY (buyer_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (seller_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- Données de base pour les catégories
@@ -198,7 +251,7 @@ INSERT INTO categories (name, slug, icon, parent_id, description) VALUES
 ('Utilitaires', 'utilitaires', 'truck', 1, 'Véhicules utilitaires'),
 ('Caravaning', 'caravaning', 'campground', 1, 'Caravanes, camping-cars'),
 ('Nautisme', 'nautisme', 'anchor', 1, 'Bateaux, jetski'),
-('Équipement auto', 'equipement-auto', 'cog', 1, 'Pièces, accessoires auto');
+('Equipement auto', 'equipement-auto', 'cog', 1, 'Pièces, accessoires auto');
 
 -- Sous-catégories pour Immobilier
 INSERT INTO categories (name, slug, icon, parent_id, description) VALUES
@@ -208,6 +261,17 @@ INSERT INTO categories (name, slug, icon, parent_id, description) VALUES
 ('Bureaux & Commerces', 'bureaux-commerces', 'store', 2, 'Locaux professionnels'),
 ('Terrains', 'terrains', 'tree', 2, 'Terrains à bâtir, agricoles');
 
+-- Create test users
+INSERT INTO users (email, password_hash, first_name, last_name, phone, is_premium) VALUES
+('seller@tia-market.mg', '$2b$10$abcdefghijklmnopqrstuvwxyz', 'Jean', 'Seller', '+261321234567', true),
+('buyer@tia-market.mg', '$2b$10$abcdefghijklmnopqrstuvwxyz', 'Marie', 'Buyer', '+261321234568', false),
+('user3@tia-market.mg', '$2b$10$abcdefghijklmnopqrstuvwxyz', 'Pierre', 'User', '+261321234569', false);
+
+-- Create user profiles
+INSERT INTO user_profiles (id, avatar_url, city, bio, rating)
+SELECT id, 'https://i.pravatar.cc/150?img=1', 'Antananarivo', 'Utilisateur de test', 4.5
+FROM users;
+
 -- Création des index pour les performances
 CREATE INDEX idx_ads_user_id ON ads(user_id);
 CREATE INDEX idx_ads_category_id ON ads(category_id);
@@ -215,9 +279,7 @@ CREATE INDEX idx_ads_city ON ads(city);
 CREATE INDEX idx_ads_price ON ads(price);
 CREATE INDEX idx_ads_created_at ON ads(created_at DESC);
 CREATE INDEX idx_ads_is_active ON ads(is_active) WHERE is_active = true;
-CREATE INDEX idx_messages_conversation ON messages(sender_id, receiver_id, ad_id);
 CREATE INDEX idx_favorites_user_id ON favorites(user_id);
-CREATE INDEX idx_notifications_user ON notifications(user_id, is_read);
 CREATE INDEX idx_ad_images_ad_id ON ad_images(ad_id);
 
 -- Fonction pour mettre à jour updated_at
@@ -259,11 +321,10 @@ LEFT JOIN categories c ON a.category_id = c.id
 LEFT JOIN favorites f ON a.id = f.ad_id
 GROUP BY a.id, u.id, up.id, c.id;
 
--- backend/test-data.sql
--- Insérer des annonces de test
+-- Test data for ads
 INSERT INTO ads (user_id, category_id, title, description, price, condition, city, is_active, is_featured, view_count)
 SELECT 
-  u.id,
+  (SELECT id FROM users LIMIT 1),
   c.id,
   CASE 
     WHEN c.id = 1 THEN 'Peugeot 208 BlueHDi 75ch 2019'
@@ -291,14 +352,11 @@ SELECT
   true,
   c.id <= 3, -- Les 3 premières catégories sont featured
   floor(random() * 1000)
-FROM users u
-CROSS JOIN categories c
+FROM categories c
 WHERE c.parent_id IS NULL
 LIMIT 50;
 
-
-
--- Ajouter des images de test
+-- Add test images
 INSERT INTO ad_images (ad_id, image_url, is_primary)
 SELECT 
   a.id,
@@ -307,57 +365,14 @@ SELECT
 FROM ads a
 ON CONFLICT DO NOTHING;
 
--- Table conversations
-CREATE TABLE conversations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    ad_id UUID,
-    user1_id UUID NOT NULL,
-    user2_id UUID NOT NULL,
-    last_message_content TEXT,
-    last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    user1_unread_count INTEGER DEFAULT 0,
-    user2_unread_count INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE CASCADE,
-    FOREIGN KEY (user1_id) REFERENCES users(id),
-    FOREIGN KEY (user2_id) REFERENCES users(id),
-    UNIQUE(ad_id, user1_id, user2_id)
-);
-
--- 3. Recréez la table messages
-CREATE TABLE messages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id UUID NOT NULL,
-    sender_id UUID NOT NULL,
-    content TEXT NOT NULL,
-    is_read BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-    FOREIGN KEY (sender_id) REFERENCES users(id)
-);
-
--- 4. Recréez la table notifications (si vous en avez besoin)
-CREATE TABLE notifications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
-    type VARCHAR(50) NOT NULL CHECK (type IN ('message', 'ad_view', 'ad_favorite', 'ad_sold', 'system')),
-    title VARCHAR(255) NOT NULL,
-    message TEXT NOT NULL,
-    data JSONB,
-    is_read BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
-
--- 5. Créez les index
+-- Create indexes for messaging
 CREATE INDEX idx_conversations_user1 ON conversations(user1_id);
 CREATE INDEX idx_conversations_user2 ON conversations(user2_id);
 CREATE INDEX idx_conversations_last_message ON conversations(last_message_at DESC);
 CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at DESC);
 CREATE INDEX idx_notifications_user_unread ON notifications(user_id, is_read, created_at DESC);
 
--- 6. Recréez la fonction get_or_create_conversation
+-- Create function get_or_create_conversation
 CREATE OR REPLACE FUNCTION get_or_create_conversation(
     p_ad_id UUID,
     p_user1_id UUID,
@@ -395,38 +410,35 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 7. Insérez des données de test (optionnel)
+-- Test data for conversations and messages
 INSERT INTO conversations (ad_id, user1_id, user2_id, last_message_content) 
 SELECT 
     a.id,
-    a.user_id,
-    u.id,
+    (SELECT id FROM users ORDER BY created_at LIMIT 1),
+    (SELECT id FROM users ORDER BY created_at DESC LIMIT 1),
     'Bonjour, je suis intéressé par votre annonce'
 FROM ads a
-CROSS JOIN users u
-WHERE u.id != a.user_id
 LIMIT 3;
 
 INSERT INTO messages (conversation_id, sender_id, content)
 SELECT 
     c.id,
-    c.user1_id,
+    (SELECT id FROM users ORDER BY created_at LIMIT 1),
     'Bonjour, votre annonce m''intéresse'
 FROM conversations c
 LIMIT 3;
 
--- 8. Affichez les tables créées
-SELECT 
-    'conversations' as table_name, 
-    COUNT(*) as row_count 
-FROM conversations
-UNION ALL
-SELECT 
-    'messages' as table_name, 
-    COUNT(*) as row_count 
-FROM messages
-UNION ALL
-SELECT 
-    'notifications' as table_name, 
-    COUNT(*) as row_count 
-FROM notifications;
+-- Index for reservation_ads
+CREATE INDEX idx_reservation_ads_user_id ON reservation_ads(user_id);
+CREATE INDEX idx_reservation_ads_type ON reservation_ads(type);
+CREATE INDEX idx_reservation_ads_created_at ON reservation_ads(created_at DESC);
+
+-- Index for bookings
+CREATE INDEX idx_bookings_seller ON bookings(seller_id, created_at DESC);
+CREATE INDEX idx_bookings_buyer ON bookings(buyer_id, created_at DESC);
+CREATE INDEX idx_bookings_ad ON bookings(ad_id, status);
+CREATE INDEX idx_bookings_status ON bookings(status, created_at DESC);
+
+-- Unique index for pending/accepted bookings only
+CREATE UNIQUE INDEX idx_bookings_unique_active ON bookings(ad_id, buyer_id) WHERE status IN ('pending', 'accepted');
+
