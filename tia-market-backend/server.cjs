@@ -2147,7 +2147,20 @@ app.post('/api/bookings', authenticateToken, async (req, res) => {
     const sellerId = adCheck.rows[0].user_id;
     const adTitle = adCheck.rows[0].title;
 
-    // Vérifier qu'il n'y a pas déjà une réservation en attente
+    // Vérifier qu'il n'y a pas déjà une réservation acceptée pour cette annonce
+    const acceptedBooking = await pool.query(
+      'SELECT id FROM bookings WHERE ad_id = $1 AND status = \'accepted\'',
+      [adId]
+    );
+
+    if (acceptedBooking.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cette annonce a déjà une réservation acceptée. Les nouvelles réservations ne sont plus possibles.'
+      });
+    }
+
+    // Vérifier qu'il n'y a pas déjà une réservation en attente pour cet utilisateur
     const existingBooking = await pool.query(
       'SELECT id FROM bookings WHERE ad_id = $1 AND buyer_id = $2 AND status IN (\'pending\', \'accepted\')',
       [adId, buyerId]
@@ -2203,11 +2216,12 @@ app.post('/api/bookings', authenticateToken, async (req, res) => {
 app.get('/api/bookings/seller', authenticateToken, async (req, res) => {
   try {
     const sellerId = req.user.userId;
+    const { adId } = req.query; // Optionnel : filtrer par annonce
 
-    const result = await pool.query(
-      `SELECT 
+    let query = `
+      SELECT 
         b.id, b.ad_id, b.buyer_id, b.seller_id, b.status, 
-        b.message, b.created_at, b.updated_at,
+        b.message, b.created_at, b.updated_at, b.payment_method, b.payment_date,
         a.title, a.price,
         u.first_name, u.last_name, u.email, u.phone,
         ai.image_url
@@ -2216,9 +2230,17 @@ app.get('/api/bookings/seller', authenticateToken, async (req, res) => {
        JOIN users u ON b.buyer_id = u.id
        LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
        WHERE b.seller_id = $1
-       ORDER BY b.created_at DESC`,
-      [sellerId]
-    );
+    `;
+    const params = [sellerId];
+
+    if (adId) {
+      query += ' AND b.ad_id = $2';
+      params.push(adId);
+    }
+
+    query += ' ORDER BY b.created_at DESC';
+
+    const result = await pool.query(query, params);
 
     res.json({
       success: true,
@@ -2239,7 +2261,10 @@ app.get('/api/bookings/seller', authenticateToken, async (req, res) => {
         },
         status: row.status,
         message: row.message,
-        createdAt: row.created_at
+        paymentMethod: row.payment_method,
+        paymentDate: row.payment_date,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
       }))
     });
   } catch (error) {
@@ -2310,7 +2335,7 @@ app.patch('/api/bookings/:id/accept', authenticateToken, async (req, res) => {
 
     // Vérifier que c'est le vendeur qui accepte
     const bookingCheck = await pool.query(
-      'SELECT seller_id, buyer_id FROM bookings WHERE id = $1',
+      'SELECT seller_id, buyer_id, ad_id, status FROM bookings WHERE id = $1',
       [id]
     );
 
@@ -2321,24 +2346,61 @@ app.patch('/api/bookings/:id/accept', authenticateToken, async (req, res) => {
       });
     }
 
+    const booking = bookingCheck.rows[0];
+
+    // Vérifier qu'il n'y a pas déjà une réservation acceptée pour cette annonce
+    const existingAccepted = await pool.query(
+      'SELECT id FROM bookings WHERE ad_id = $1 AND status = \'accepted\' AND id != $2',
+      [booking.ad_id, id]
+    );
+
+    if (existingAccepted.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Une réservation a déjà été acceptée pour cette annonce'
+      });
+    }
+
+    // Rejeter automatiquement toutes les autres réservations en attente pour cette annonce
+    await pool.query(
+      `UPDATE bookings 
+       SET status = 'rejected', updated_at = CURRENT_TIMESTAMP 
+       WHERE ad_id = $1 AND status = 'pending' AND id != $2`,
+      [booking.ad_id, id]
+    );
+
+    // Accepter cette réservation
     await pool.query(
       'UPDATE bookings SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
       ['accepted', id]
     );
 
     // Notifier l'acheteur
-    const buyerId = bookingCheck.rows[0].buyer_id;
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
-       VALUES ($1, 'booking_accepted', 'Réservation acceptée', 'Votre réservation a été acceptée', $2, false)`,
-      [buyerId, id]
+       VALUES ($1, 'booking_accepted', 'Réservation acceptée', 'Votre réservation a été acceptée. Vous pouvez maintenant procéder à la livraison.', $2, false)`,
+      [booking.buyer_id, id]
     );
+
+    // Notifier les autres acheteurs que leur réservation a été refusée
+    const rejectedBookings = await pool.query(
+      'SELECT buyer_id FROM bookings WHERE ad_id = $1 AND status = \'rejected\' AND id != $2',
+      [booking.ad_id, id]
+    );
+
+    for (const rejected of rejectedBookings.rows) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
+         VALUES ($1, 'booking_rejected', 'Réservation refusée', 'Votre réservation a été refusée car une autre réservation a été acceptée.', $2, false)`,
+        [rejected.buyer_id, id]
+      );
+    }
 
     console.log('✅ Réservation acceptée:', id);
 
     res.json({
       success: true,
-      message: 'Réservation acceptée'
+      message: 'Réservation acceptée. Les autres réservations ont été automatiquement refusées.'
     });
   } catch (error) {
     console.error('❌ Erreur acceptation réservation:', error);
@@ -2396,7 +2458,66 @@ app.patch('/api/bookings/:id/reject', authenticateToken, async (req, res) => {
   }
 });
 
-// PATCH /api/bookings/:id/payment - Simuler le paiement
+// PATCH /api/bookings/:id/deliver - Confirmer la livraison (vendeur)
+app.patch('/api/bookings/:id/deliver', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sellerId = req.user.userId;
+
+    // Vérifier que c'est le vendeur qui confirme la livraison
+    const bookingCheck = await pool.query(
+      'SELECT seller_id, buyer_id, status FROM bookings WHERE id = $1',
+      [id]
+    );
+
+    if (bookingCheck.rows.length === 0 || bookingCheck.rows[0].seller_id !== sellerId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Non autorisé à confirmer la livraison pour cette réservation'
+      });
+    }
+
+    const booking = bookingCheck.rows[0];
+
+    if (booking.status !== 'accepted') {
+      return res.status(400).json({
+        success: false,
+        error: 'La réservation doit être acceptée avant de confirmer la livraison'
+      });
+    }
+
+    // Mettre à jour le statut à 'delivered' (on utilisera 'paid' comme statut temporaire, ou on peut ajouter 'delivered')
+    // Pour l'instant, on va utiliser un statut personnalisé dans payment_method pour indiquer la livraison
+    await pool.query(
+      `UPDATE bookings 
+       SET status = 'delivered', updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1`,
+      [id]
+    );
+
+    // Notifier l'acheteur que la livraison est confirmée
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
+       VALUES ($1, 'delivery_confirmed', 'Livraison confirmée', 'La livraison a été confirmée. Vous pouvez maintenant procéder au paiement.', $2, false)`,
+      [booking.buyer_id, id]
+    );
+
+    console.log('✅ Livraison confirmée pour réservation:', id);
+
+    res.json({
+      success: true,
+      message: 'Livraison confirmée. L\'acheteur peut maintenant procéder au paiement.'
+    });
+  } catch (error) {
+    console.error('❌ Erreur confirmation livraison:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la confirmation de la livraison'
+    });
+  }
+});
+
+// PATCH /api/bookings/:id/payment - Simuler le paiement (seulement si delivered)
 app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -2405,7 +2526,7 @@ app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
 
     // Vérifier que c'est l'acheteur qui paie
     const bookingCheck = await pool.query(
-      'SELECT buyer_id, seller_id, ad_id FROM bookings WHERE id = $1',
+      'SELECT buyer_id, seller_id, ad_id, status FROM bookings WHERE id = $1',
       [id]
     );
 
@@ -2416,23 +2537,44 @@ app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
       });
     }
 
+    const booking = bookingCheck.rows[0];
+
+    // Vérifier que la livraison a été confirmée
+    if (booking.status !== 'delivered') {
+      return res.status(400).json({
+        success: false,
+        error: 'Le paiement n\'est possible qu\'après confirmation de la livraison par le vendeur'
+      });
+    }
+
+    if (!paymentMethod) {
+      return res.status(400).json({
+        success: false,
+        error: 'Méthode de paiement requise'
+      });
+    }
+
     // Simulation du paiement (2 secondes)
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     await pool.query(
-      'UPDATE bookings SET status = $1, payment_method = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-      ['paid', paymentMethod, id]
+      `UPDATE bookings 
+       SET status = 'paid', 
+           payment_method = $1, 
+           payment_date = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $2`,
+      [paymentMethod, id]
     );
 
     // Notifier le vendeur
-    const sellerId = bookingCheck.rows[0].seller_id;
     await pool.query(
       `INSERT INTO notifications (user_id, type, title, message, related_id, is_read)
        VALUES ($1, 'payment_received', 'Paiement reçu', 'Le paiement a été reçu pour votre annonce', $2, false)`,
-      [sellerId, id]
+      [booking.seller_id, id]
     );
 
-    console.log('✅ Paiement simulé pour réservation:', id);
+    console.log('✅ Paiement effectué pour réservation:', id);
 
     res.json({
       success: true,
