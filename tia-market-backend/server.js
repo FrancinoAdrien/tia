@@ -61,7 +61,7 @@ app.get('/api/test', async (req, res) => {
             status: 'OK',
             timestamp: new Date().toISOString(),
             server: {
-                ip: '192.168.88.252',
+                ip: '192.168.88.29',
                 port: 3001,
                 environment: process.env.NODE_ENV || 'development'
             },
@@ -147,7 +147,7 @@ app.post('/api/register', async (req, res) => {
                 userId: user.id,
                 email: user.email
             },
-            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252', {
+            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', {
                 expiresIn: '7d'
             }
         );
@@ -232,7 +232,7 @@ app.post('/api/login', async (req, res) => {
                 userId: user.id,
                 email: user.email
             },
-            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252', {
+            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', {
                 expiresIn: '7d'
             }
         );
@@ -274,7 +274,7 @@ function authenticateToken(req, res, next) {
         });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.252', (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', (err, user) => {
         if (err) {
             return res.status(403).json({
                 error: 'Token invalide ou expiré'
@@ -337,16 +337,16 @@ app.listen(PORT, HOST, () => {
     console.log('='.repeat(60));
     console.log(`📡 Serveur: http://${HOST}:${PORT}`);
     console.log(`💻 Local: http://localhost:${PORT}`);
-    console.log(`📱 Mobile: http://192.168.88.252:${PORT}`);
+    console.log(`📱 Mobile: http://192.168.88.29:${PORT}`);
     console.log('='.repeat(60));
     console.log('🔗 Endpoints:');
-    console.log(`   🔍 Test: http://192.168.88.252:${PORT}/api/test`);
-    console.log(`   📝 Register: POST http://192.168.88.252:${PORT}/api/register`);
-    console.log(`   🔑 Login: POST http://192.168.88.252:${PORT}/api/login`);
+    console.log(`   🔍 Test: http://192.168.88.29:${PORT}/api/test`);
+    console.log(`   📝 Register: POST http://192.168.88.29:${PORT}/api/register`);
+    console.log(`   🔑 Login: POST http://192.168.88.29:${PORT}/api/login`);
     console.log('='.repeat(60));
     console.log('📱 Pour tester depuis votre téléphone:');
     console.log(`   1. Ouvrez Chrome sur votre téléphone`);
-    console.log(`   2. Allez à: http://192.168.88.252:${PORT}/api/test`);
+    console.log(`   2. Allez à: http://192.168.88.29:${PORT}/api/test`);
     console.log(`   3. Vous devriez voir "Backend TIA Market Opérationnel"`);
     console.log('='.repeat(60));
 });
@@ -997,7 +997,7 @@ app.listen(PORT, HOST, () => {
     console.log('='.repeat(60));
     console.log(`📡 Serveur: http://${HOST}:${PORT}`);
     console.log(`💻 Local: http://localhost:${PORT}`);
-    console.log(`📱 Mobile: http://192.168.88.252:${PORT}`);
+    console.log(`📱 Mobile: http://192.168.88.29:${PORT}`);
     console.log('='.repeat(60));
     console.log('🔗 Endpoints:');
     console.log(`   🔍 Test: GET /api/test`);

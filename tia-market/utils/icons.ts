@@ -1,0 +1,42 @@
+export const iconMapping = {
+  // Cartes
+  'store': 'storefront-outline',
+  'users': 'people-outline',
+  'suitcase': 'briefcase-outline',
+  'door-open': 'door-open-outline',
+  'gamepad': 'game-controller-outline',
+  'shirt': 'shirt-outline',
+  'car': 'car-outline',
+  'home': 'home-outline',
+  'tv': 'tv-outline',
+  'bed': 'bed-outline',
+  'briefcase': 'briefcase-outline',
+  'paw': 'paw-outline',
+  'grid': 'grid-outline',
+  'tag': 'pricetag-outline',
+  'phone': 'call-outline',
+  'mail': 'mail-outline',
+  'lock': 'lock-closed-outline',
+  'camera': 'camera-outline',
+  'image': 'image-outline',
+  'eye': 'eye-outline',
+  'heart': 'heart-outline',
+  'star': 'star-outline',
+  'location': 'location-outline',
+  'filter': 'filter-outline',
+  'search': 'search-outline',
+  'add': 'add-circle-outline',
+  'arrow-back': 'arrow-back-outline',
+  'chevron-down': 'chevron-down-outline',
+  'chevron-forward': 'chevron-forward-outline',
+  'close': 'close-outline',
+  'checkmark': 'checkmark-outline',
+  'alert': 'alert-circle-outline',
+  'information': 'information-circle-outline',
+  'newspaper': 'newspaper-outline',
+  'trending-up': 'trending-up-outline',
+};
+
+export const getIoniconsName = (iconName: string): string => {
+  return iconMapping[iconName as keyof typeof iconMapping] || 'help-circle-outline';
+};
