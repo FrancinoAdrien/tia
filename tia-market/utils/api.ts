@@ -80,6 +80,8 @@ export interface User {
   isPremium?: boolean;
   premiumPlan?: 'starter' | 'pro' | 'enterprise';
   endPremium?: string;
+  rating?: number;
+  ratingCount?: number;
 }
 
 export interface Wallet {
@@ -1074,6 +1076,157 @@ export const pointsApi = {
       return {
         success: false,
         error: error.response?.data?.error || 'Erreur lors de la récupération des crédits'
+      };
+    }
+  },
+};
+
+// Rating API - Système de notation des utilisateurs
+export const ratingApi = {
+  // Installer le système de notation (à exécuter une seule fois)
+  setupRatingSystem: async (): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const response = await api.post('/setup/rating-system');
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur installation système notation:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Erreur lors de l\'installation'
+      };
+    }
+  },
+
+  // Noter un utilisateur
+  rateUser: async (userId: string, rating: number, comment?: string, adId?: string): Promise<{ 
+    success: boolean; 
+    message?: string; 
+    newRating?: number; 
+    ratingCount?: number; 
+    error?: string 
+  }> => {
+    try {
+      const response = await api.post(`/users/${userId}/rate`, { rating, comment, adId });
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur notation utilisateur:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Erreur lors de la notation'
+      };
+    }
+  },
+
+  // Récupérer les notes d'un utilisateur
+  getUserRatings: async (userId: string): Promise<{ 
+    success: boolean; 
+    averageRating?: number; 
+    ratingCount?: number; 
+    ratings?: Array<{
+      rating: number;
+      comment?: string;
+      createdAt: string;
+      raterName: string;
+    }>;
+    error?: string 
+  }> => {
+    try {
+      const response = await api.get(`/users/${userId}/ratings`);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur récupération notes:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Erreur lors de la récupération des notes'
+      };
+    }
+  },
+
+  // Vérifier si l'utilisateur peut noter (a effectué une transaction)
+  canRateUser: async (userId: string): Promise<{ success: boolean; canRate?: boolean; error?: string }> => {
+    try {
+      const response = await api.get(`/users/${userId}/can-rate`);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur vérification droit notation:', error);
+      return {
+        success: false,
+        canRate: false,
+        error: error.response?.data?.error || 'Erreur lors de la vérification'
+      };
+    }
+  },
+};
+
+// Favorites API - Système de favoris
+export const favoritesApi = {
+  // Installer le système de favoris (à exécuter une seule fois)
+  setupFavoritesSystem: async (): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+      const response = await api.post('/setup/favorites-system');
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur installation système favoris:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Erreur lors de l\'installation'
+      };
+    }
+  },
+
+  // Ajouter/Retirer une annonce des favoris (toggle)
+  toggleFavorite: async (adId: string): Promise<{ 
+    success: boolean; 
+    isFavorite?: boolean; 
+    message?: string; 
+    error?: string 
+  }> => {
+    try {
+      const response = await api.post(`/favorites/${adId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur toggle favori:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Erreur lors de la modification'
+      };
+    }
+  },
+
+  // Récupérer tous les favoris de l'utilisateur
+  getFavorites: async (): Promise<{ 
+    success: boolean; 
+    favorites?: AdWithDetails[]; 
+    count?: number;
+    error?: string 
+  }> => {
+    try {
+      const response = await api.get('/favorites');
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur récupération favoris:', error);
+      return {
+        success: false,
+        error: error.response?.data?.error || 'Erreur lors de la récupération'
+      };
+    }
+  },
+
+  // Vérifier si une annonce est en favoris
+  checkFavorite: async (adId: string): Promise<{ 
+    success: boolean; 
+    isFavorite?: boolean; 
+    error?: string 
+  }> => {
+    try {
+      const response = await api.get(`/favorites/${adId}/check`);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Erreur vérification favori:', error);
+      return {
+        success: false,
+        isFavorite: false,
+        error: error.response?.data?.error || 'Erreur lors de la vérification'
       };
     }
   },

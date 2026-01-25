@@ -179,12 +179,16 @@ export default function HomeScreen() {
       hasImageUrl: !!item.imageUrl,
       hasPrimaryImage: !!item.primary_image,
       imageUrl: imageUrl,
+      isFeatured: item.is_featured,
     });
     
     
     return (
       <TouchableOpacity 
-        style={styles.adCard}
+        style={[
+          styles.adCard,
+          item.is_featured && styles.featuredAdCard
+        ]}
         onPress={() => router.push(`/ad/${item.id}`)}
         activeOpacity={0.7}
       >
@@ -568,6 +572,14 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
+  },
+  featuredAdCard: {
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    elevation: 4,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   adImageContainer: {
     width: '100%',
