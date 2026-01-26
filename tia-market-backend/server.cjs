@@ -61,7 +61,7 @@ app.get('/api/test', async (req, res) => {
             status: 'OK',
             timestamp: new Date().toISOString(),
             server: {
-                ip: '192.168.88.29',
+                ip: '192.168.88.251',
                 port: 3001,
                 environment: process.env.NODE_ENV || 'development'
             },
@@ -147,7 +147,7 @@ app.post('/api/register', async (req, res) => {
                 userId: user.id,
                 email: user.email
             },
-            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', {
+            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.251', {
                 expiresIn: '7d'
             }
         );
@@ -235,7 +235,7 @@ app.post('/api/login', async (req, res) => {
                 userId: user.id,
                 email: user.email
             },
-            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', {
+            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.251', {
                 expiresIn: '7d'
             }
         );
@@ -280,7 +280,7 @@ function authenticateToken(req, res, next) {
         });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.251', (err, user) => {
         if (err) {
             return res.status(403).json({
                 error: 'Token invalide ou expiré'
@@ -740,7 +740,7 @@ app.get('/api/categories/:parentId/subcategories', async (req, res) => {
     }
 });
 
-// Route pour les annonces récentes
+// Route pour les annonces récentes (tri: À la une > Nouvelles > Normales)
 app.get('/api/ads/recent', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 20;
@@ -751,19 +751,26 @@ app.get('/api/ads/recent', async (req, res) => {
         a.*,
         u.first_name,
         u.last_name,
+        u.rating,
+        u.rating_count,
         c.name as category_name,
         c.slug as category_slug,
         c.icon as category_icon,
         c.color as category_color,
         ai.image_url,
         -- Retourner l'URL complète
-        CONCAT('${baseUrl}', ai.image_url) as full_image_url
+        CASE 
+        WHEN ai.image_url LIKE 'http%' THEN ai.image_url
+        ELSE CONCAT('${baseUrl}', ai.image_url)
+        END as full_image_url
       FROM ads a
       LEFT JOIN users u ON a.user_id = u.id
       LEFT JOIN categories c ON a.category_id = c.id
       LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
       WHERE a.is_active = true AND a.is_sold = false
-      ORDER BY a.created_at DESC
+      ORDER BY 
+        a.is_featured DESC,  -- À la une en premier
+        a.created_at DESC    -- Puis les plus récents
       LIMIT $1`,
             [limit]
         );
@@ -788,6 +795,8 @@ app.get('/api/ads/recent', async (req, res) => {
                 user: {
                     firstName: ad.first_name,
                     lastName: ad.last_name,
+                    rating: ad.rating,
+                    ratingCount: ad.rating_count,
                 },
                 category: {
                     name: ad.category_name,
@@ -814,30 +823,39 @@ app.use('/uploads', (req, res, next) => {
     next();
 });
 
-// Route pour les annonces populaires
+// Route pour les annonces populaires (tri: À la une > Plus vues > Plus récentes)
 app.get('/api/ads/popular', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 10;
+        const baseUrl = req.protocol + '://' + req.get('host');
 
+        // À la ligne ~1320 dans servera.js :
         const result = await pool.query(
             `SELECT 
-        a.*,
-        u.first_name,
-        u.last_name,
-        u.is_premium,
-        c.name as category_name,
-        c.slug as category_slug,
-        (SELECT image_url FROM ad_images WHERE ad_id = a.id AND is_primary = true LIMIT 1) as image_url
-      FROM ads a
-      LEFT JOIN users u ON a.user_id = u.id
-      LEFT JOIN categories c ON a.category_id = c.id
-      WHERE a.is_active = true AND a.is_sold = false
-      ORDER BY 
-        CASE WHEN u.is_premium = true THEN 0 ELSE 1 END,
-        a.is_featured DESC,
-        a.view_count DESC, 
-        a.created_at DESC
-      LIMIT $1`,
+            a.*,
+            u.first_name,
+            u.last_name,
+            u.rating,
+            u.rating_count,
+            c.name as category_name,
+            c.slug as category_slug,
+            c.icon as category_icon,
+            c.color as category_color,
+            ai.image_url,
+            -- Vérifier si c'est déjà une URL complète
+            CASE 
+                WHEN ai.image_url LIKE 'http%' THEN ai.image_url
+                ELSE CONCAT('${baseUrl}', ai.image_url)
+            END as full_image_url
+            FROM ads a
+            LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN categories c ON a.category_id = c.id
+            LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
+            WHERE a.is_active = true AND a.is_sold = false
+            ORDER BY 
+            a.is_featured DESC,
+            a.created_at DESC
+            LIMIT $1`,
             [limit]
         );
 
@@ -862,12 +880,16 @@ app.get('/api/ads/popular', async (req, res) => {
                     firstName: ad.first_name,
                     lastName: ad.last_name,
                     isPremium: ad.is_premium,
+                    rating: ad.rating,
+                    ratingCount: ad.rating_count,
                 },
                 category: {
                     name: ad.category_name,
                     slug: ad.category_slug,
+                    icon: ad.category_icon,
+                    color: ad.category_color,
                 },
-                imageUrl: ad.image_url,
+                imageUrl: ad.full_image_url || ad.image_url,
             }))
         });
     } catch (error) {
@@ -3653,6 +3675,435 @@ app.patch('/api/bookings/:id/payment', authenticateToken, async (req, res) => {
     }
 });
 
+// ============================================
+// SYSTÈME DE NOTATION DES UTILISATEURS
+// ============================================
+
+// Route pour exécuter la migration du système de notation
+app.post('/api/setup/rating-system', async (req, res) => {
+    try {
+        console.log('🔧 Installation du système de notation...');
+
+        // Ajouter les colonnes rating et rating_count à la table users
+        await pool.query(`
+            ALTER TABLE users 
+            ADD COLUMN IF NOT EXISTS rating DECIMAL(3,2) DEFAULT 2.50,
+            ADD COLUMN IF NOT EXISTS rating_count INTEGER DEFAULT 0;
+        `);
+
+        // Mettre à jour tous les utilisateurs existants avec une note de 2.5
+        await pool.query(`
+            UPDATE users 
+            SET rating = 2.50, rating_count = 0 
+            WHERE rating IS NULL;
+        `);
+
+        // Créer la table user_ratings
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_ratings (
+                id SERIAL PRIMARY KEY,
+                rated_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                rater_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                ad_id UUID REFERENCES ads(id) ON DELETE SET NULL,
+                rating INTEGER NOT NULL CHECK (rating >= 0 AND rating <= 5),
+                comment TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(rated_user_id, rater_user_id, ad_id)
+            );
+        `);
+
+        // Créer les index
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_user_ratings_rated_user ON user_ratings(rated_user_id);
+            CREATE INDEX IF NOT EXISTS idx_user_ratings_rater_user ON user_ratings(rater_user_id);
+            CREATE INDEX IF NOT EXISTS idx_user_ratings_ad ON user_ratings(ad_id);
+        `);
+
+        console.log('✅ Système de notation installé avec succès');
+
+        res.json({
+            success: true,
+            message: 'Système de notation installé avec succès'
+        });
+    } catch (error) {
+        console.error('❌ Erreur installation système de notation:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de l\'installation du système de notation',
+            details: error.message
+        });
+    }
+});
+
+// Route pour noter un utilisateur
+app.post('/api/users/:userId/rate', authenticateToken, async (req, res) => {
+    try {
+        const {
+            userId
+        } = req.params;
+        const {
+            rating,
+            comment,
+            adId
+        } = req.body;
+        const raterUserId = req.user.userId;
+
+        // Validation
+        if (!rating || rating < 0 || rating > 5) {
+            return res.status(400).json({
+                success: false,
+                error: 'La note doit être entre 0 et 5'
+            });
+        }
+
+        // Vérifier qu'on ne note pas soi-même
+        if (userId === raterUserId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Vous ne pouvez pas vous noter vous-même'
+            });
+        }
+
+        // Insérer ou mettre à jour la note
+        await pool.query(`
+            INSERT INTO user_ratings (rated_user_id, rater_user_id, ad_id, rating, comment)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (rated_user_id, rater_user_id, ad_id) 
+            DO UPDATE SET rating = $4, comment = $5, created_at = CURRENT_TIMESTAMP
+        `, [userId, raterUserId, adId || null, rating, comment || null]);
+
+        // Recalculer la note moyenne de l'utilisateur
+        const avgResult = await pool.query(`
+            SELECT COALESCE(AVG(rating), 2.50) as avg_rating, COUNT(*) as rating_count
+            FROM user_ratings
+            WHERE rated_user_id = $1
+        `, [userId]);
+
+        const avgRating = parseFloat(avgResult.rows[0].avg_rating).toFixed(2);
+        const ratingCount = parseInt(avgResult.rows[0].rating_count);
+
+        // Mettre à jour la note de l'utilisateur
+        await pool.query(`
+            UPDATE users 
+            SET rating = $1, rating_count = $2 
+            WHERE id = $3
+        `, [avgRating, ratingCount, userId]);
+
+        console.log(`✅ Note ajoutée: ${rating}/5 pour utilisateur ${userId}`);
+
+        res.json({
+            success: true,
+            message: 'Note enregistrée avec succès',
+            newRating: avgRating,
+            ratingCount: ratingCount
+        });
+    } catch (error) {
+        console.error('❌ Erreur notation utilisateur:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la notation',
+            details: error.message
+        });
+    }
+});
+
+// Route pour récupérer les notes d'un utilisateur
+app.get('/api/users/:userId/ratings', async (req, res) => {
+    try {
+        const {
+            userId
+        } = req.params;
+
+        // Récupérer les informations de l'utilisateur
+        const userResult = await pool.query(`
+            SELECT rating, rating_count 
+            FROM users 
+            WHERE id = $1
+        `, [userId]);
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Utilisateur non trouvé'
+            });
+        }
+
+        const user = userResult.rows[0];
+
+        // Récupérer les évaluations individuelles (les 10 dernières)
+        const ratingsResult = await pool.query(`
+            SELECT 
+                ur.rating,
+                ur.comment,
+                ur.created_at,
+                u.first_name,
+                u.last_name
+            FROM user_ratings ur
+            JOIN users u ON ur.rater_user_id = u.id
+            WHERE ur.rated_user_id = $1
+            ORDER BY ur.created_at DESC
+            LIMIT 10
+        `, [userId]);
+
+        res.json({
+            success: true,
+            averageRating: parseFloat(user.rating),
+            ratingCount: user.rating_count,
+            ratings: ratingsResult.rows.map(r => ({
+                rating: r.rating,
+                comment: r.comment,
+                createdAt: r.created_at,
+                raterName: `${r.first_name} ${r.last_name.charAt(0)}.`
+            }))
+        });
+    } catch (error) {
+        console.error('❌ Erreur récupération notes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la récupération des notes'
+        });
+    }
+});
+
+// Route pour vérifier si un utilisateur peut noter un autre (a effectué une transaction)
+app.get('/api/users/:userId/can-rate', authenticateToken, async (req, res) => {
+    try {
+        const {
+            userId
+        } = req.params;
+        const raterUserId = req.user.userId;
+
+        // Vérifier si l'utilisateur a effectué une réservation avec cet utilisateur
+        const result = await pool.query(`
+            SELECT COUNT(*) as count
+            FROM bookings b
+            JOIN ads a ON b.ad_id = a.id
+            WHERE a.user_id = $1 
+            AND b.buyer_id = $2
+            AND b.status = 'completed'
+        `, [userId, raterUserId]);
+
+        const canRate = parseInt(result.rows[0].count) > 0;
+
+        res.json({
+            success: true,
+            canRate: canRate
+        });
+    } catch (error) {
+        console.error('❌ Erreur vérification droit de notation:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la vérification'
+        });
+    }
+});
+
+// ============================================
+// SYSTÈME DE FAVORIS
+// ============================================
+
+// Route pour installer le système de favoris (première exécution)
+app.post('/api/setup/favorites-system', async (req, res) => {
+    try {
+        console.log('🔧 Installation du système de favoris...');
+
+        // Créer la table des favoris
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS favorites (
+                id SERIAL PRIMARY KEY,
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                ad_id UUID NOT NULL REFERENCES ads(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, ad_id)
+            );
+        `);
+
+        // Créer les index
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_favorites_user_id ON favorites(user_id);
+            CREATE INDEX IF NOT EXISTS idx_favorites_ad_id ON favorites(ad_id);
+            CREATE INDEX IF NOT EXISTS idx_favorites_created_at ON favorites(created_at DESC);
+        `);
+
+        console.log('✅ Système de favoris installé avec succès');
+
+        res.json({
+            success: true,
+            message: 'Système de favoris installé avec succès'
+        });
+    } catch (error) {
+        console.error('❌ Erreur installation système favoris:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de l\'installation du système de favoris',
+            details: error.message
+        });
+    }
+});
+
+// Ajouter/Retirer un favori
+app.post('/api/favorites/:adId', authenticateToken, async (req, res) => {
+    try {
+        const {
+            adId
+        } = req.params;
+        const userId = req.user.userId;
+
+        // Vérifier si l'annonce existe
+        const adCheck = await pool.query('SELECT id FROM ads WHERE id = $1', [adId]);
+        if (adCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Annonce non trouvée'
+            });
+        }
+
+        // Vérifier si déjà en favoris
+        const existingFavorite = await pool.query(
+            'SELECT id FROM favorites WHERE user_id = $1 AND ad_id = $2',
+            [userId, adId]
+        );
+
+        if (existingFavorite.rows.length > 0) {
+            // Retirer des favoris
+            await pool.query(
+                'DELETE FROM favorites WHERE user_id = $1 AND ad_id = $2',
+                [userId, adId]
+            );
+
+            console.log(`❌ Favori retiré: annonce ${adId} pour utilisateur ${userId}`);
+
+            return res.json({
+                success: true,
+                isFavorite: false,
+                message: 'Annonce retirée des favoris'
+            });
+        } else {
+            // Ajouter aux favoris
+            await pool.query(
+                'INSERT INTO favorites (user_id, ad_id) VALUES ($1, $2)',
+                [userId, adId]
+            );
+
+            console.log(`✅ Favori ajouté: annonce ${adId} pour utilisateur ${userId}`);
+
+            return res.json({
+                success: true,
+                isFavorite: true,
+                message: 'Annonce ajoutée aux favoris'
+            });
+        }
+    } catch (error) {
+        console.error('❌ Erreur ajout/retrait favori:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la modification des favoris'
+        });
+    }
+});
+
+// Récupérer tous les favoris de l'utilisateur
+app.get('/api/favorites', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const baseUrl = req.protocol + '://' + req.get('host');
+
+        const result = await pool.query(`
+            SELECT 
+                a.*,
+                u.first_name,
+                u.last_name,
+                u.rating,
+                u.rating_count,
+                c.name as category_name,
+                c.slug as category_slug,
+                c.icon as category_icon,
+                c.color as category_color,
+                ai.image_url,
+                CONCAT('${baseUrl}', ai.image_url) as full_image_url,
+                f.created_at as favorited_at
+            FROM favorites f
+            JOIN ads a ON f.ad_id = a.id
+            LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN categories c ON a.category_id = c.id
+            LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
+            WHERE f.user_id = $1
+            ORDER BY f.created_at DESC
+        `, [userId]);
+
+        const favorites = result.rows.map(ad => ({
+            id: ad.id,
+            title: ad.title,
+            description: ad.description,
+            price: ad.price,
+            priceNegotiable: ad.price_negotiable,
+            condition: ad.condition,
+            city: ad.city,
+            postalCode: ad.postal_code,
+            isActive: ad.is_active,
+            isSold: ad.is_sold,
+            isFeatured: ad.is_featured,
+            viewCount: ad.view_count,
+            createdAt: ad.created_at,
+            updatedAt: ad.updated_at,
+            favoritedAt: ad.favorited_at,
+            user: {
+                firstName: ad.first_name,
+                lastName: ad.last_name,
+                rating: ad.rating,
+                ratingCount: ad.rating_count,
+            },
+            category: {
+                name: ad.category_name,
+                slug: ad.category_slug,
+                icon: ad.category_icon,
+                color: ad.category_color,
+            },
+            imageUrl: ad.full_image_url || ad.image_url,
+            userId: ad.user_id,
+            categoryId: ad.category_id,
+        }));
+
+        res.json({
+            success: true,
+            favorites: favorites,
+            count: favorites.length
+        });
+    } catch (error) {
+        console.error('❌ Erreur récupération favoris:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la récupération des favoris'
+        });
+    }
+});
+
+// Vérifier si une annonce est en favoris
+app.get('/api/favorites/:adId/check', authenticateToken, async (req, res) => {
+    try {
+        const {
+            adId
+        } = req.params;
+        const userId = req.user.userId;
+
+        const result = await pool.query(
+            'SELECT id FROM favorites WHERE user_id = $1 AND ad_id = $2',
+            [userId, adId]
+        );
+
+        res.json({
+            success: true,
+            isFavorite: result.rows.length > 0
+        });
+    } catch (error) {
+        console.error('❌ Erreur vérification favori:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la vérification'
+        });
+    }
+});
+
 const PORT = process.env.PORT || 3001;
 const HOST = '0.0.0.0'; // Écouter sur toutes les interfaces
 
@@ -3665,7 +4116,7 @@ app.listen(PORT, HOST, () => {
     // Détecter l'IP automatiquement si possible
     const os = require('os');
     const networkInterfaces = os.networkInterfaces();
-    let detectedIP = '192.168.88.29'; // IP par défaut
+    let detectedIP = '192.168.88.251'; // IP par défaut
 
     // Chercher une IP locale
     for (const interfaceName in networkInterfaces) {
@@ -3676,7 +4127,7 @@ app.listen(PORT, HOST, () => {
                 break;
             }
         }
-        if (detectedIP !== '192.168.88.29') break;
+        if (detectedIP !== '192.168.88.251') break;
     }
 
     console.log(`📱 Mobile: http://${detectedIP}:${PORT}`);

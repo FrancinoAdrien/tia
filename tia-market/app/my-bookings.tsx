@@ -53,7 +53,7 @@ const getSafeImageUrl = (imagePath: string | undefined | null): string => {
     return imagePath;
   }
   
-  const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.88.29:3001';
+  const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.88.251:3001';
   
   if (imagePath.startsWith('/')) {
     return `${API_BASE_URL}${imagePath}`;

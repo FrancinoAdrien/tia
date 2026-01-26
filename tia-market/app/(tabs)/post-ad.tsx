@@ -116,15 +116,15 @@ export default function PostAdScreen() {
       Alert.alert('Limite atteinte', `Vous ne pouvez ajouter que ${maxPhotos} photos maximum.`);
       return;
     }
-
+  
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
-
+  
       if (!result.canceled && result.assets[0].uri) {
         setImages([...images, result.assets[0].uri]);
       }
@@ -133,21 +133,22 @@ export default function PostAdScreen() {
       Alert.alert('Erreur', 'Impossible de sélectionner l\'image');
     }
   };
-
+  
   const takePhoto = async () => {
     const maxPhotos = formData.maxPhotos || getMaxPhotos();
     if (images.length >= maxPhotos) {
       Alert.alert('Limite atteinte', `Vous ne pouvez ajouter que ${maxPhotos} photos maximum.`);
       return;
     }
-
+  
     try {
       const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images, // ← CHANGÉ ICI
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
       });
-
+  
       if (!result.canceled && result.assets[0].uri) {
         setImages([...images, result.assets[0].uri]);
       }

@@ -1,3 +1,9 @@
+-- ============================================
+-- FICHIER PRINCIPAL : TIA MARKET DATABASE
+-- ============================================
+-- Contient la structure initiale + toutes les migrations
+-- ============================================
+
 -- Supprimer la base existante si elle existe (optionnel)
 DROP DATABASE IF EXISTS tia_market;
 
@@ -301,8 +307,8 @@ CREATE TRIGGER update_ads_updated_at BEFORE UPDATE ON ads
 CREATE TRIGGER update_transactions_updated_at BEFORE UPDATE ON transactions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Vue pour les annonces avec informations utilisateur
-CREATE VIEW ads_with_user AS
+-- Vue pour les annonces avec informations utilisateur (CORRIGÉE)
+CREATE OR REPLACE VIEW ads_with_user AS
 SELECT 
     a.*,
     u.first_name,
@@ -310,6 +316,7 @@ SELECT
     u.phone,
     up.city as user_city,
     up.avatar_url,
+    up.rating as user_rating,
     c.name as category_name,
     c.slug as category_slug,
     (SELECT image_url FROM ad_images WHERE ad_id = a.id AND is_primary = true LIMIT 1) as primary_image,
@@ -442,3 +449,328 @@ CREATE INDEX idx_bookings_status ON bookings(status, created_at DESC);
 -- Unique index for pending/accepted bookings only
 CREATE UNIQUE INDEX idx_bookings_unique_active ON bookings(ad_id, buyer_id) WHERE status IN ('pending', 'accepted');
 
+-- ============================================
+-- MIGRATION 1: Ajouter les statuts 'delivered' et 'delivery_confirmed' à la table bookings
+-- ============================================
+
+-- Étape 1: Supprimer la contrainte CHECK existante
+ALTER TABLE bookings DROP CONSTRAINT IF EXISTS bookings_status_check;
+
+-- Étape 2: Ajouter la nouvelle contrainte CHECK avec les nouveaux statuts
+ALTER TABLE bookings 
+ADD CONSTRAINT bookings_status_check 
+CHECK (status IN ('pending', 'accepted', 'rejected', 'delivered', 'delivery_confirmed', 'paid', 'completed', 'cancelled'));
+
+-- Ajouter une colonne pour le numéro de téléphone du vendeur (pour Mobile Money)
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS seller_phone VARCHAR(20);
+
+-- ============================================
+-- MIGRATION 2: Ajouter le rating aux utilisateurs
+-- ============================================
+
+-- 1. Ajouter les colonnes manquantes à la table users pour simplifier les requêtes
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS rating DECIMAL(3,2) DEFAULT 0.00,
+ADD COLUMN IF NOT EXISTS rating_count INTEGER DEFAULT 0;
+
+-- 2. Synchroniser les données existantes depuis user_profiles
+UPDATE users u
+SET 
+    rating = COALESCE(up.rating, 0.00),
+    rating_count = COALESCE(up.total_ratings, 0)
+FROM user_profiles up
+WHERE u.id = up.id;
+
+-- 3. Créer un trigger pour maintenir les données synchronisées
+-- CREATE OR REPLACE FUNCTION sync_user_ratings()
+-- RETURNS TRIGGER AS $$
+-- BEGIN
+--     -- Si on met à jour user_profiles, synchroniser vers users
+--     IF TG_TABLE_NAME = 'user_profiles' THEN
+--         UPDATE users 
+--         SET 
+--             rating = COALESCE(NEW.rating, 0.00),
+--             rating_count = COALESCE(NEW.total_ratings, 0)
+--         WHERE id = NEW.id;
+--     -- Si on met à jour users, synchroniser vers user_profiles
+--     ELSIF TG_TABLE_NAME = 'users' THEN
+--         UPDATE user_profiles 
+--         SET 
+--             rating = COALESCE(NEW.rating, 0.00),
+--             total_ratings = COALESCE(NEW.rating_count, 0)
+--         WHERE id = NEW.id;
+--     END IF;
+--     RETURN NEW;
+-- END;
+-- $$ LANGUAGE plpgsql;
+
+-- 4. Créer les triggers de synchronisation
+DROP TRIGGER IF EXISTS sync_ratings_to_users ON user_profiles;
+CREATE TRIGGER sync_ratings_to_users
+    AFTER INSERT OR UPDATE OF rating, total_ratings ON user_profiles
+    FOR EACH ROW
+    EXECUTE FUNCTION sync_user_ratings();
+
+DROP TRIGGER IF EXISTS sync_ratings_to_profiles ON users;
+CREATE TRIGGER sync_ratings_to_profiles
+    AFTER INSERT OR UPDATE OF rating, rating_count ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION sync_user_ratings();
+
+-- 5. Re-créer la vue ads_with_user avec les bons noms de colonnes
+CREATE OR REPLACE VIEW ads_with_user AS
+SELECT 
+    a.*,
+    u.first_name,
+    u.last_name,
+    u.phone,
+    u.rating as user_rating,          -- ← Maintenant disponible dans users
+    u.rating_count as user_rating_count, -- ← Maintenant disponible dans users
+    up.city as user_city,
+    up.avatar_url,
+    c.name as category_name,
+    c.slug as category_slug,
+    (SELECT image_url FROM ad_images WHERE ad_id = a.id AND is_primary = true LIMIT 1) as primary_image,
+    COUNT(f.ad_id) as favorite_count
+FROM ads a
+LEFT JOIN users u ON a.user_id = u.id
+LEFT JOIN user_profiles up ON u.id = up.id
+LEFT JOIN categories c ON a.category_id = c.id
+LEFT JOIN favorites f ON a.id = f.ad_id
+GROUP BY a.id, u.id, up.id, c.id;
+
+-- 6. Optionnel: Mettre à jour les users qui n'ont pas de user_profiles
+INSERT INTO user_profiles (id, avatar_url, city, bio, rating, total_ratings)
+SELECT 
+    u.id,
+    'https://i.pravatar.cc/150?img=1',
+    'Antananarivo',
+    'Utilisateur Tia Market',
+    u.rating,
+    u.rating_count
+FROM users u
+WHERE u.id NOT IN (SELECT id FROM user_profiles);
+
+-- ============================================
+-- MIGRATION 3: Ajouter le système de wallet et les nouveaux plans premium
+-- ============================================
+
+-- 1. Ajouter le champ premium_plan à la table users
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS premium_plan VARCHAR(20) CHECK (premium_plan IN ('starter', 'pro', 'enterprise', NULL));
+
+-- 2. Créer la table wallet pour les comptes fictifs
+CREATE TABLE IF NOT EXISTS wallet (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE,
+    balance DECIMAL(12, 2) DEFAULT 0.00 CHECK (balance >= 0),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 3. Créer la table wallet_transactions pour l'historique
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    type VARCHAR(20) NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'payment', 'refund')),
+    amount DECIMAL(12, 2) NOT NULL CHECK (amount > 0),
+    description TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed', 'cancelled')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (wallet_id) REFERENCES wallet(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 4. Ajouter le champ quantity à la table ads
+ALTER TABLE ads 
+ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1 CHECK (quantity >= 0);
+
+-- 5. Ajouter le champ sold_quantity à la table ads pour suivre les ventes
+ALTER TABLE ads 
+ADD COLUMN IF NOT EXISTS sold_quantity INTEGER DEFAULT 0 CHECK (sold_quantity >= 0);
+
+-- 6. Créer un index pour les transactions
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user ON wallet_transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_wallet ON wallet_transactions(wallet_id, created_at DESC);
+
+-- 7. Créer un trigger pour mettre à jour updated_at automatiquement
+CREATE OR REPLACE FUNCTION update_wallet_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_wallet_updated_at BEFORE UPDATE ON wallet
+    FOR EACH ROW EXECUTE FUNCTION update_wallet_updated_at();
+
+CREATE TRIGGER update_wallet_transactions_updated_at BEFORE UPDATE ON wallet_transactions
+    FOR EACH ROW EXECUTE FUNCTION update_wallet_updated_at();
+
+-- 8. Fonction pour créer automatiquement un wallet lors de la création d'un utilisateur
+CREATE OR REPLACE FUNCTION create_wallet_for_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO wallet (user_id, balance) VALUES (NEW.id, 0.00);
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Supprimer le trigger s'il existe déjà
+DROP TRIGGER IF EXISTS trigger_create_wallet ON users;
+
+-- Créer le trigger
+CREATE TRIGGER trigger_create_wallet
+    AFTER INSERT ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION create_wallet_for_user();
+
+-- 9. Créer des wallets pour les utilisateurs existants qui n'en ont pas
+INSERT INTO wallet (user_id, balance)
+SELECT id, 0.00
+FROM users
+WHERE id NOT IN (SELECT user_id FROM wallet)
+ON CONFLICT (user_id) DO NOTHING;
+
+-- ============================================
+-- MIGRATION 4: Ajouter le système de points, crédits, et fonctionnalités premium avancées
+-- ============================================
+
+-- 1. Ajouter le système de points utilisateur
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0 CHECK (points >= 0);
+
+ALTER TABLE users 
+ADD COLUMN IF NOT EXISTS credits DECIMAL(12, 2) DEFAULT 0.00 CHECK (credits >= 0);
+
+-- 2. Table pour l'historique des points
+CREATE TABLE IF NOT EXISTS user_points_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    points INTEGER NOT NULL,
+    type VARCHAR(50) NOT NULL CHECK (type IN ('daily_login', 'review', 'subscription', 'referral', 'beta', 'reward_claimed')),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- 3. Ajouter les champs pour les annonces premium
+ALTER TABLE ads 
+ADD COLUMN IF NOT EXISTS is_urgent BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE ads 
+ADD COLUMN IF NOT EXISTS featured_until TIMESTAMP;
+
+ALTER TABLE ads 
+ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
+
+ALTER TABLE ads 
+ADD COLUMN IF NOT EXISTS max_photos INTEGER DEFAULT 5;
+
+-- 4. Table pour les crédits "À la une" gratuits (pour packs Pro/Entreprise)
+CREATE TABLE IF NOT EXISTS user_featured_credits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    credits_remaining INTEGER DEFAULT 0 CHECK (credits_remaining >= 0),
+    last_reset_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(user_id)
+);
+
+-- 5. Table pour les transactions de crédits (achats de fonctionnalités)
+CREATE TABLE IF NOT EXISTS credit_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    ad_id UUID,
+    type VARCHAR(50) NOT NULL CHECK (type IN ('featured_7d', 'featured_14d', 'urgent', 'extra_photos_5', 'extra_photos_15', 'renew_30d', 'renew_150d')),
+    amount DECIMAL(12, 2) NOT NULL CHECK (amount > 0),
+    description TEXT,
+    status VARCHAR(20) DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'refunded')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (ad_id) REFERENCES ads(id) ON DELETE SET NULL
+);
+
+-- 6. Créer des index
+CREATE INDEX IF NOT EXISTS idx_user_points_history_user ON user_points_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ads_featured_until ON ads(featured_until) WHERE featured_until IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ads_expires_at ON ads(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_user ON credit_transactions(user_id, created_at DESC);
+
+-- 7. Fonction pour réinitialiser les crédits "À la une" mensuels (pour packs Pro)
+CREATE OR REPLACE FUNCTION reset_monthly_featured_credits()
+RETURNS void AS $$
+BEGIN
+    -- Réinitialiser les crédits pour les utilisateurs Pro (5 crédits/mois)
+    UPDATE user_featured_credits
+    SET credits_remaining = 5,
+        last_reset_date = CURRENT_DATE,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE user_id IN (
+        SELECT u.id FROM users u
+        WHERE u.is_premium = true 
+        AND u.premium_plan = 'pro'
+        AND (ufc.last_reset_date IS NULL OR ufc.last_reset_date < DATE_TRUNC('month', CURRENT_DATE))
+    )
+    FROM user_featured_credits ufc
+    WHERE user_featured_credits.user_id = ufc.user_id;
+    
+    -- Créer les crédits pour les nouveaux utilisateurs Pro qui n'en ont pas
+    INSERT INTO user_featured_credits (user_id, credits_remaining, last_reset_date)
+    SELECT u.id, 5, CURRENT_DATE
+    FROM users u
+    WHERE u.is_premium = true 
+    AND u.premium_plan = 'pro'
+    AND u.id NOT IN (SELECT user_id FROM user_featured_credits)
+    ON CONFLICT (user_id) DO NOTHING;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 8. Créer un trigger pour mettre à jour expires_at lors de la création d'une annonce
+CREATE OR REPLACE FUNCTION set_ad_expiration()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Si expires_at n'est pas défini, le définir à 30 jours
+    IF NEW.expires_at IS NULL THEN
+        NEW.expires_at = NEW.created_at + INTERVAL '30 days';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_set_ad_expiration ON ads;
+CREATE TRIGGER trigger_set_ad_expiration
+    BEFORE INSERT ON ads
+    FOR EACH ROW
+    EXECUTE FUNCTION set_ad_expiration();
+
+-- 9. Initialiser expires_at pour les annonces existantes
+UPDATE ads 
+SET expires_at = created_at + INTERVAL '30 days'
+WHERE expires_at IS NULL;
+
+-- ============================================
+-- VÉRIFICATION FINALE
+-- ============================================
+
+-- Vérification: Afficher les contraintes pour confirmer
+SELECT 
+    conname AS constraint_name,
+    pg_get_constraintdef(oid) AS constraint_definition
+FROM pg_constraint
+WHERE conrelid = 'bookings'::regclass
+AND conname = 'bookings_status_check';
+
+-- Vérifications diverses
+SELECT 'Migration terminée avec succès!' as status;
+SELECT COUNT(*) as users_avec_rating FROM users WHERE rating > 0;
+SELECT COUNT(*) as users_avec_rating_count FROM users WHERE rating_count > 0;
+SELECT COUNT(*) as users_avec_points FROM users WHERE points > 0;
+SELECT COUNT(*) as wallets_crees FROM wallet;
+SELECT COUNT(*) as users_avec_wallet FROM (SELECT DISTINCT user_id FROM wallet) t;

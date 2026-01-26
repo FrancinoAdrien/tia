@@ -21,31 +21,31 @@ const PREMIUM_PLANS: PremiumPlan[] = [
   {
     id: 'starter',
     name: 'Starter',
-    price: 50000,
-    currency: 'AR',
+    price: 49000,
+    currency: 'Ar',
     period: '/mois',
-    pricePerMonth: 50000,
-    description: 'Page boutique personnalisée, 10 photos/annonce, jusqu\'à 20 produits par annonce, statistiques basiques',
+    pricePerMonth: 49000,
+    description: '20 annonces/mois, 10 photos/annonce, quantité jusqu\'à 10, annonces réservations, annonces pro, 7 jours à la une pour 5 annonces',
     color: '#118AB2',
   },
   {
     id: 'pro',
     name: 'Pro',
-    price: 100000,
-    currency: 'AR',
+    price: 99000,
+    currency: 'Ar',
     period: '/mois',
-    pricePerMonth: 100000,
-    description: 'Badge vendeur vérifié, statistiques avancées, 20 photos/annonce, gestion de stock, jusqu\'à 40 produits',
+    pricePerMonth: 99000,
+    description: '50 annonces/mois, badge vendeur vérifié, statistiques avancées, 20 photos (20 annonces), 15 photos (30 restantes), priorité recherche, quantité jusqu\'à 30, 5 remontées gratuites/mois, 14 jours à la une pour 15 annonces',
     color: '#1B5E20',
   },
   {
     id: 'enterprise',
     name: 'Entreprise',
-    price: 200000,
-    currency: 'AR',
+    price: 199000,
+    currency: 'Ar',
     period: '/mois',
-    pricePerMonth: 200000,
-    description: 'Badge entreprise premium, statistiques très avancées + reporting mensuel, photos illimitées, quantité illimitée',
+    pricePerMonth: 199000,
+    description: 'Annonces illimitées, quantité illimitée, badge "Entreprise Premium", multi-utilisateurs, position garantie en haut, remontée illimitée, à la une illimitée',
     savings: 'Solution complète',
     color: '#FF6B35',
   },
@@ -53,29 +53,32 @@ const PREMIUM_PLANS: PremiumPlan[] = [
 
 const PREMIUM_FEATURES = {
   starter: [
-    { icon: 'store', title: 'Page boutique personnalisée', description: 'Créez votre propre page boutique avec votre identité' },
-    { icon: 'upload-multiple', title: '10 photos par annonce', description: 'Jusqu\'à 10 photos pour chaque annonce' },
-    { icon: 'package-variant', title: 'Jusqu\'à 20 produits', description: 'Vendez jusqu\'à 20 produits par annonce' },
-    { icon: 'chart-bar', title: 'Statistiques basiques', description: 'Suivez les performances de vos annonces' },
+    { icon: 'tag-multiple', title: '20 annonces/mois', description: 'Publiez jusqu\'à 20 annonces par mois' },
+    { icon: 'image-multiple', title: '10 photos par annonce', description: 'Jusqu\'à 10 photos pour chaque annonce' },
+    { icon: 'package-variant', title: 'Quantité jusqu\'à 10', description: 'Vendez jusqu\'à 10 produits par annonce' },
+    { icon: 'calendar-check', title: 'Annonces réservations', description: 'Hotels, restaurants et autres services' },
+    { icon: 'briefcase', title: 'Annonces professionnelles', description: 'Marquez vos annonces comme pro' },
+    { icon: 'star', title: '7 jours à la une', description: '5 annonces à la une pendant 7 jours' },
   ],
   pro: [
-    { icon: 'badge-account', title: 'Badge vendeur vérifié', description: 'Badge de confiance pour vos clients' },
-    { icon: 'chart-line', title: 'Statistiques avancées', description: 'Analyses détaillées et insights' },
-    { icon: 'upload-multiple', title: '20 photos par annonce', description: 'Jusqu\'à 20 photos pour chaque annonce' },
-    { icon: 'package-variant', title: 'Jusqu\'à 40 produits', description: 'Vendez jusqu\'à 40 produits par annonce' },
-    { icon: 'store', title: 'Page boutique personnalisée', description: 'Créez votre propre page boutique' },
-    { icon: 'star', title: '5 "À la une" gratuits/mois', description: 'Mettez 5 annonces à la une chaque mois' },
-    { icon: 'cog', title: 'Gestion de stock intégrée', description: 'Suivez vos stocks automatiquement' },
+    { icon: 'tag-multiple', title: '50 annonces/mois', description: 'Publiez jusqu\'à 50 annonces par mois' },
+    { icon: 'badge-account', title: 'Badge vendeur vérifié', description: 'Badge de confiance sur toutes vos annonces' },
+    { icon: 'chart-line', title: 'Statistiques avancées', description: 'Analyses détaillées de vos performances' },
+    { icon: 'image-multiple', title: 'Photos illimitées', description: '20 photos pour 20 annonces, 15 pour le reste' },
+    { icon: 'magnify', title: 'Priorité recherche', description: 'Apparaissez en premier dans les recherches' },
+    { icon: 'package-variant', title: 'Quantité jusqu\'à 30', description: 'Vendez jusqu\'à 30 produits par annonce' },
+    { icon: 'arrow-up-bold', title: '5 remontées gratuites', description: 'Remontez vos annonces gratuitement chaque mois' },
+    { icon: 'star', title: '14 jours à la une', description: '15 annonces à la une pendant 14 jours' },
   ],
   enterprise: [
-    { icon: 'office-building', title: 'Badge entreprise premium', description: 'Badge exclusif pour entreprises' },
-    { icon: 'chart-timeline-variant', title: 'Statistiques très avancées', description: 'Analyses approfondies et reporting mensuel' },
-    { icon: 'upload-multiple', title: 'Photos illimitées', description: 'Autant de photos que vous voulez' },
+    { icon: 'infinity', title: 'Annonces illimitées', description: 'Aucune limite sur le nombre d\'annonces' },
     { icon: 'package-variant', title: 'Quantité illimitée', description: 'Vendez autant de produits que vous voulez' },
-    { icon: 'star', title: '"À la une" illimité', description: 'Mettez toutes vos annonces à la une gratuitement' },
-    { icon: 'store', title: 'Page boutique premium', description: 'Boutique personnalisée avec design avancé' },
-    { icon: 'headset', title: 'Support prioritaire 24/7', description: 'Assistance dédiée en continu' },
-    { icon: 'file-document-multiple', title: 'Reporting mensuel', description: 'Rapports détaillés chaque mois' },
+    { icon: 'office-building', title: 'Badge Entreprise Premium', description: 'Badge exclusif sur toutes vos annonces' },
+    { icon: 'account-multiple', title: 'Multi-utilisateurs', description: 'Plusieurs utilisateurs pour gérer le compte' },
+    { icon: 'trophy', title: 'Position garantie en haut', description: 'Toujours en haut de votre catégorie' },
+    { icon: 'arrow-up-bold', title: 'Remontée illimitée', description: 'Remontez vos annonces autant que nécessaire' },
+    { icon: 'star', title: 'À la une illimitée', description: 'Toutes vos annonces à la une gratuitement' },
+    { icon: 'headset', title: 'Support prioritaire', description: 'Assistance dédiée 24/7' },
   ],
 };
 
@@ -169,13 +172,52 @@ export default function PremiumAccessScreen() {
 
         {/* Features Section */}
         <View style={styles.featuresSection}>
-          <Text style={styles.featuresTitle}>Fonctionnalités Premium Incluses</Text>
+          <Text style={styles.featuresTitle}>Fonctionnalités par Plan</Text>
 
+          {/* Starter Features */}
+          <View style={styles.planFeaturesHeader} style={[styles.planFeaturesHeader, { borderLeftColor: '#118AB2' }]}>
+            <Icon name="crown" size={20} color="#118AB2" />
+            <Text style={styles.planFeatureName}>Pack Starter</Text>
+          </View>
           <View style={styles.featuresGrid}>
-            {PREMIUM_FEATURES.map((feature, index) => (
-              <View key={index} style={styles.featureItem}>
+            {PREMIUM_FEATURES.starter.map((feature, index) => (
+              <View key={`starter-${index}`} style={[styles.featureItem, { borderLeftColor: '#118AB2' }]}>
+                <View style={styles.featureIconContainer}>
+                  <Icon name={feature.icon} size={24} color="#118AB2" />
+                </View>
+                <Text style={styles.featureTitle}>{feature.title}</Text>
+                <Text style={styles.featureDescription}>{feature.description}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Pro Features */}
+          <View style={[styles.planFeaturesHeader, { borderLeftColor: '#1B5E20' }]}>
+            <Icon name="crown" size={20} color="#1B5E20" />
+            <Text style={styles.planFeatureName}>Pack Pro</Text>
+          </View>
+          <View style={styles.featuresGrid}>
+            {PREMIUM_FEATURES.pro.map((feature, index) => (
+              <View key={`pro-${index}`} style={[styles.featureItem, { borderLeftColor: '#1B5E20' }]}>
                 <View style={styles.featureIconContainer}>
                   <Icon name={feature.icon} size={24} color="#1B5E20" />
+                </View>
+                <Text style={styles.featureTitle}>{feature.title}</Text>
+                <Text style={styles.featureDescription}>{feature.description}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Enterprise Features */}
+          <View style={[styles.planFeaturesHeader, { borderLeftColor: '#FF6B35' }]}>
+            <Icon name="crown" size={20} color="#FF6B35" />
+            <Text style={styles.planFeatureName}>Pack Entreprise</Text>
+          </View>
+          <View style={styles.featuresGrid}>
+            {PREMIUM_FEATURES.enterprise.map((feature, index) => (
+              <View key={`enterprise-${index}`} style={[styles.featureItem, { borderLeftColor: '#FF6B35' }]}>
+                <View style={styles.featureIconContainer}>
+                  <Icon name={feature.icon} size={24} color="#FF6B35" />
                 </View>
                 <Text style={styles.featureTitle}>{feature.title}</Text>
                 <Text style={styles.featureDescription}>{feature.description}</Text>
@@ -382,6 +424,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingLeft: 16,
     borderLeftWidth: 4,
+    marginTop: 24,
+  },
+  planFeatureName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
   },
   featuresGrid: {
     flexDirection: 'row',
