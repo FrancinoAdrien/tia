@@ -39,11 +39,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const checkLoginStatus = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
-      const user = await AsyncStorage.getItem('userInfo');
+      const userString = await AsyncStorage.getItem('userInfo');
       
-      if (token && user) {
+      if (token && userString) {
+        const user = JSON.parse(userString);
+        
+        // Ajouter les champs calculés si manquants
+        const userWithCalculatedFields = {
+          ...user,
+          isPremium: user.premiumPack && user.premiumPack !== 'simple',
+          premiumPlan: user.premiumPack || user.premiumPlan,
+        };
+        
         setUserToken(token);
-        setUserInfo(JSON.parse(user));
+        setUserInfo(userWithCalculatedFields);
         
         // Vérifier si le token est toujours valide
         try {
@@ -67,13 +76,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authApi.login({ email, password });
       
       console.log('✅ Connexion réussie via API');
+      console.log('Premium pack reçu:', response.user.premiumPack);
+      
+      // Préparer l'objet user avec les champs calculés
+      const userData = {
+        ...response.user,
+        // Calculer isPremium à partir de premiumPack
+        isPremium: response.user.premiumPack && response.user.premiumPack !== 'simple',
+        // Alias pour la compatibilité
+        premiumPlan: response.user.premiumPack,
+      };
       
       setUserToken(response.token);
-      setUserInfo(response.user);
-
+      setUserInfo(userData);
+  
       // Sauvegarder dans AsyncStorage
       await AsyncStorage.setItem('userToken', response.token);
-      await AsyncStorage.setItem('userInfo', JSON.stringify(response.user));
+      await AsyncStorage.setItem('userInfo', JSON.stringify(userData));
       
     } catch (error: any) {
       console.error('❌ Erreur API login:', error);
@@ -102,12 +121,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.log('✅ Inscription réussie via API');
       console.log('   Nouvel user ID:', response.user.id);
       
+      // Ajouter les champs calculés
+      const userWithCalculatedFields = {
+        ...response.user,
+        isPremium: response.user.premiumPack && response.user.premiumPack !== 'simple',
+        premiumPlan: response.user.premiumPack,
+      };
+      
       setUserToken(response.token);
-      setUserInfo(response.user);
-
-      // CORRECTION : setItem au lieu de getItem
+      setUserInfo(userWithCalculatedFields);
+  
       await AsyncStorage.setItem('userToken', response.token);
-      await AsyncStorage.setItem('userInfo', JSON.stringify(response.user));
+      await AsyncStorage.setItem('userInfo', JSON.stringify(userWithCalculatedFields));
       
       console.log('💾 Compte créé et session sauvegardée');
       
@@ -148,26 +173,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const makeUserPremium = async () => {
+  const changePremiumPack = async (pack: 'simple' | 'starter' | 'pro' | 'entreprise') => {
     try {
-      const response = await api.patch('/user/premium', { isPremium: true });
+      const response = await api.patch('/user/premium-pack', { premiumPack: pack });
       
       if (response.data.success) {
         // Mettre à jour les informations utilisateur
         setUserInfo(prev => ({
           ...prev,
-          isPremium: true
+          premiumPack: pack
         }));
         
         // Sauvegarder dans AsyncStorage si nécessaire
-        const updatedUser = { ...userInfo, isPremium: true };
+        const updatedUser = { ...userInfo, premiumPack: pack };
         await AsyncStorage.setItem('userInfo', JSON.stringify(updatedUser));
         
         return true;
       }
       return false;
     } catch (error) {
-      console.error('Erreur activation premium:', error);
+      console.error('Erreur changement pack premium:', error);
       throw error;
     }
   };
@@ -177,8 +202,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authApi.getProfile();
       
       if (response.user) {
-        setUserInfo(response.user);
-        await AsyncStorage.setItem('userInfo', JSON.stringify(response.user));
+        // Ajouter les champs calculés
+        const updatedUser = {
+          ...response.user,
+          isPremium: response.user.premiumPack && response.user.premiumPack !== 'simple',
+          premiumPlan: response.user.premiumPack,
+        };
+        
+        setUserInfo(updatedUser);
+        await AsyncStorage.setItem('userInfo', JSON.stringify(updatedUser));
       }
     } catch (error) {
       console.error('Erreur mise à jour profil premium:', error);
@@ -186,8 +218,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const value = {
-    // ... autres valeurs
-    makeUserPremium,
+    changePremiumPack,
     updateUserPremium,
   };
 

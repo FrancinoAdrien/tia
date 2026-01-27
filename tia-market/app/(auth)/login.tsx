@@ -41,7 +41,7 @@ export default function LoginScreen() {
       let errorMessage = error.message || 'Email ou mot de passe incorrect';
       
       if (errorMessage.includes('Network Error') || errorMessage.includes('Pas de réponse')) {
-        errorMessage = 'Impossible de se connecter au serveur.\n\nVérifiez que:\n• Le backend est démarré\n• Votre téléphone est sur le même WiFi\n• L\'adresse IP est correcte (192.168.88.251)';
+        errorMessage = 'Impossible de se connecter au serveur.\n\nVérifiez que:\n• Le backend est démarré\n• Votre téléphone est sur le même WiFi\n• L\'adresse IP est correcte (192.168.43.213)';
       }
       
       Alert.alert('Erreur de connexion', errorMessage);
@@ -61,7 +61,7 @@ export default function LoginScreen() {
           <Text style={styles.title}>TIA Market</Text>
           <Text style={styles.subtitle}>La bonne affaire</Text>
           <Text style={styles.serverInfo}>
-            Connexion à PostgreSQL via 192.168.88.251
+            Connexion à PostgreSQL via 192.168.43.213
           </Text>
         </View>
 

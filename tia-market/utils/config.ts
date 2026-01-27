@@ -1,7 +1,7 @@
 // utils/config.ts
 
 // CONFIGURATION FIXE POUR EXPO GO SUR TÉLÉPHONE PHYSIQUE
-const YOUR_COMPUTER_IP = '192.168.88.251';
+const YOUR_COMPUTER_IP = '192.168.43.213';
 const BACKEND_PORT = '3001';
 
 export const API_CONFIG = {

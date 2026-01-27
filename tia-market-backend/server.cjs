@@ -61,7 +61,7 @@ app.get('/api/test', async (req, res) => {
             status: 'OK',
             timestamp: new Date().toISOString(),
             server: {
-                ip: '192.168.88.251',
+                ip: '192.168.43.213',
                 port: 3001,
                 environment: process.env.NODE_ENV || 'development'
             },
@@ -128,9 +128,9 @@ app.post('/api/register', async (req, res) => {
 
         // Insérer utilisateur
         const result = await pool.query(
-            `INSERT INTO users (email, password_hash, first_name, last_name, phone) 
-       VALUES ($1, $2, $3, $4, $5) 
-       RETURNING id, email, first_name, last_name, phone, is_premium, end_premium, created_at`,
+            `INSERT INTO users (email, password_hash, first_name, last_name, phone, premium_pack) 
+            VALUES ($1, $2, $3, $4, $5, 'simple') 
+            RETURNING id, email, first_name, last_name, phone, premium_pack, created_at`,
             [email, passwordHash, firstName || null, lastName || null, phone || null]
         );
 
@@ -145,9 +145,10 @@ app.post('/api/register', async (req, res) => {
         // Générer token
         const token = jwt.sign({
                 userId: user.id,
-                email: user.email
+                email: user.email,
+                premiumPack: user.premium_pack
             },
-            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.251', {
+            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.43.213', {
                 expiresIn: '7d'
             }
         );
@@ -164,9 +165,8 @@ app.post('/api/register', async (req, res) => {
                 firstName: user.first_name,
                 lastName: user.last_name,
                 phone: user.phone,
-                isPremium: user.is_premium,
-                premiumPlan: null,
-                endPremium: user.end_premium,
+                premiumPack: user.premium_pack,
+                isVerified: false,
                 createdAt: user.created_at,
             }
         });
@@ -203,7 +203,7 @@ app.post('/api/login', async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, 
-              u.phone, u.is_verified, u.is_premium, u.end_premium, u.created_at
+              u.phone, u.premium_pack, u.is_verified, u.created_at
        FROM users u
        WHERE u.email = $1 AND u.is_active = true`,
             [email]
@@ -233,9 +233,10 @@ app.post('/api/login', async (req, res) => {
         // Générer token
         const token = jwt.sign({
                 userId: user.id,
-                email: user.email
+                email: user.email,
+                premiumPack: user.premium_pack
             },
-            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.251', {
+            process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.29', {
                 expiresIn: '7d'
             }
         );
@@ -252,10 +253,8 @@ app.post('/api/login', async (req, res) => {
                 firstName: user.first_name,
                 lastName: user.last_name,
                 phone: user.phone,
+                premiumPack: user.premium_pack,
                 isVerified: user.is_verified,
-                isPremium: user.is_premium,
-                premiumPlan: user.premium_plan,
-                endPremium: user.end_premium,
                 createdAt: user.created_at,
             }
         });
@@ -280,7 +279,7 @@ function authenticateToken(req, res, next) {
         });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.88.251', (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET || 'tia_market_secret_key_192.168.43.213', (err, user) => {
         if (err) {
             return res.status(403).json({
                 error: 'Token invalide ou expiré'
@@ -296,8 +295,8 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT u.id, u.email, u.first_name, u.last_name, u.phone,
-              u.is_verified, u.is_premium, u.premium_plan, u.end_premium, u.created_at, 
-              up.city, up.avatar_url, up.bio
+              u.premium_pack, u.is_verified, u.created_at, 
+              up.city, up.avatar_url, up.bio, up.rating as user_rating
        FROM users u
        LEFT JOIN user_profiles up ON u.id = up.id
        WHERE u.id = $1`,
@@ -319,13 +318,12 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
                 firstName: user.first_name,
                 lastName: user.last_name,
                 phone: user.phone,
+                premiumPack: user.premium_pack,
                 isVerified: user.is_verified,
-                isPremium: user.is_premium,
-                premiumPlan: user.premium_plan,
-                endPremium: user.end_premium,
                 city: user.city,
                 avatarUrl: user.avatar_url,
                 bio: user.bio,
+                userRating: user.user_rating,
                 createdAt: user.created_at,
             }
         });
@@ -345,7 +343,8 @@ app.get('/api/user/ads', authenticateToken, async (req, res) => {
         a.*,
         u.first_name,
         u.last_name,
-        u.is_premium,
+        u.premium_pack,
+        u.badge,
         c.name as category_name,
         c.slug as category_slug,
         (SELECT image_url FROM ad_images WHERE ad_id = a.id AND is_primary = true LIMIT 1) as image_url,
@@ -369,16 +368,24 @@ app.get('/api/user/ads', authenticateToken, async (req, res) => {
                 condition: ad.condition,
                 city: ad.city,
                 postalCode: ad.postal_code,
+                quantity: ad.quantity || 1,
+                soldQuantity: ad.sold_quantity || 0,
                 isActive: ad.is_active,
                 isSold: ad.is_sold,
                 isFeatured: ad.is_featured,
+                isUrgent: ad.is_urgent || false,
+                featuredUntil: ad.featured_until,
+                expiresAt: ad.expires_at,
+                maxPhotos: ad.max_photos || 5,
                 viewCount: ad.view_count,
                 createdAt: ad.created_at,
                 updatedAt: ad.updated_at,
                 user: {
                     firstName: ad.first_name,
                     lastName: ad.last_name,
-                    isPremium: ad.is_premium,
+                    premiumPack: ad.premium_pack,
+                    badge: ad.badge,
+                    isPremium: ad.premium_pack !== 'simple', // Dérivé: true si pas "simple"
                 },
                 category: {
                     name: ad.category_name,
@@ -437,9 +444,9 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
             });
         }
 
-        // Récupérer le plan premium de l'utilisateur pour valider la quantité
+        // Récupérer le pack premium de l'utilisateur pour valider la quantité
         const userCheck = await pool.query(
-            'SELECT premium_plan, is_premium FROM users WHERE id = $1',
+            'SELECT premium_pack FROM users WHERE id = $1',
             [req.user.userId]
         );
 
@@ -450,25 +457,30 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
         }
 
         const user = userCheck.rows[0];
-        let maxQuantity = 1; // Par défaut pour les utilisateurs non premium
-        let maxPhotos = 5; // Par défaut
+        let maxQuantity = 1; // Par défaut pour les utilisateurs simple
+        let maxPhotosAllowed = 5; // Par défaut
 
-        // Définir les limites selon le plan
-        if (user.is_premium && user.premium_plan) {
-            switch (user.premium_plan) {
-                case 'starter':
-                    maxQuantity = 20;
-                    maxPhotos = 10;
-                    break;
-                case 'pro':
-                    maxQuantity = 40;
-                    maxPhotos = 20;
-                    break;
-                case 'enterprise':
-                    maxQuantity = 999999; // Illimité
-                    maxPhotos = 999999; // Illimité
-                    break;
-            }
+        // Définir les limites selon le pack
+        switch (user.premium_pack) {
+            case 'simple':
+                maxQuantity = 1;
+                maxPhotosAllowed = 5;
+                break;
+            case 'starter':
+                maxQuantity = 20;
+                maxPhotosAllowed = 10;
+                break;
+            case 'pro':
+                maxQuantity = 40;
+                maxPhotosAllowed = 20;
+                break;
+            case 'entreprise':
+                maxQuantity = 999999; // Illimité
+                maxPhotosAllowed = 999999; // Illimité
+                break;
+            default:
+                maxQuantity = 1;
+                maxPhotosAllowed = 5;
         }
 
         // Valider la quantité
@@ -476,7 +488,7 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
             return res.status(400).json({
                 error: `Quantité invalide. Maximum autorisé: ${maxQuantity}`,
                 maxQuantity: maxQuantity,
-                plan: user.premium_plan || 'standard',
+                pack: user.premium_pack,
             });
         }
 
@@ -498,7 +510,7 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
 
             if (featuredCost > 0) {
                 // Vérifier les crédits gratuits pour packs Pro/Entreprise
-                if (user.premium_plan === 'pro') {
+                if (user.premium_pack === 'pro') {
                     const creditsResult = await pool.query(
                         'SELECT credits_remaining FROM user_featured_credits WHERE user_id = $1',
                         [req.user.userId]
@@ -535,7 +547,7 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
                             available: userCredits,
                         });
                     }
-                } else if (user.premium_plan === 'enterprise') {
+                } else if (user.premium_pack === 'entreprise') {
                     // Entreprise: illimité
                     featuredUntil = new Date();
                     featuredUntil.setDate(featuredUntil.getDate() + featuredDays);
@@ -626,13 +638,14 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + 30);
 
-        // Insérer l'annonce
+        // Insérer l'annonce (notez que quantity et sold_quantity ne sont pas dans votre schéma actuel)
+        // J'utilise les colonnes qui existent dans votre db.sql
         const result = await pool.query(
             `INSERT INTO ads (
         user_id, category_id, title, description, price, 
-        price_negotiable, condition, city, postal_code, quantity, sold_quantity,
-        is_featured, is_urgent, featured_until, expires_at, max_photos
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        price_negotiable, condition, city, postal_code, quantity,
+        is_featured, featured_until, featured_days
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
             [
                 req.user.userId,
@@ -645,12 +658,9 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
                 city,
                 postalCode || null,
                 quantity,
-                0, // sold_quantity initialisé à 0
                 isFeatured || false,
-                isUrgent || false,
                 featuredUntil,
-                expiresAt,
-                finalMaxPhotos,
+                featuredDays,
             ]
         );
 
@@ -674,15 +684,11 @@ app.post('/api/ads', authenticateToken, async (req, res) => {
                 categoryId: ad.category_id,
                 userId: ad.user_id,
                 quantity: ad.quantity || 1,
-                soldQuantity: ad.sold_quantity || 0,
                 createdAt: ad.created_at,
                 isActive: ad.is_active,
                 isSold: ad.is_sold,
                 isFeatured: ad.is_featured || false,
-                isUrgent: ad.is_urgent || false,
                 featuredUntil: ad.featured_until,
-                expiresAt: ad.expires_at,
-                maxPhotos: ad.max_photos || 5,
                 viewCount: ad.view_count,
             }
         });
@@ -748,30 +754,31 @@ app.get('/api/ads/recent', async (req, res) => {
 
         const result = await pool.query(
             `SELECT 
-        a.*,
-        u.first_name,
-        u.last_name,
-        u.rating,
-        u.rating_count,
-        c.name as category_name,
-        c.slug as category_slug,
-        c.icon as category_icon,
-        c.color as category_color,
-        ai.image_url,
-        -- Retourner l'URL complète
-        CASE 
-        WHEN ai.image_url LIKE 'http%' THEN ai.image_url
-        ELSE CONCAT('${baseUrl}', ai.image_url)
-        END as full_image_url
-      FROM ads a
-      LEFT JOIN users u ON a.user_id = u.id
-      LEFT JOIN categories c ON a.category_id = c.id
-      LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
-      WHERE a.is_active = true AND a.is_sold = false
-      ORDER BY 
-        a.is_featured DESC,  -- À la une en premier
-        a.created_at DESC    -- Puis les plus récents
-      LIMIT $1`,
+                a.*,
+                u.first_name,
+                u.last_name,
+                up.rating as user_rating,
+                up.total_ratings as user_rating_count,
+                c.name as category_name,
+                c.slug as category_slug,
+                c.icon as category_icon,
+                c.color as category_color,
+                ai.image_url,
+                -- Retourner l'URL complète
+                CASE 
+                    WHEN ai.image_url LIKE 'http%' THEN ai.image_url
+                    ELSE CONCAT('${baseUrl}', ai.image_url)
+                END as full_image_url
+            FROM ads a
+            LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN user_profiles up ON u.id = up.id
+            LEFT JOIN categories c ON a.category_id = c.id
+            LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
+            WHERE a.is_active = true AND a.is_sold = false
+            ORDER BY 
+                a.is_featured DESC,  -- À la une en premier
+                a.created_at DESC    -- Puis les plus récents
+            LIMIT $1`,
             [limit]
         );
 
@@ -795,8 +802,8 @@ app.get('/api/ads/recent', async (req, res) => {
                 user: {
                     firstName: ad.first_name,
                     lastName: ad.last_name,
-                    rating: ad.rating,
-                    ratingCount: ad.rating_count,
+                    rating: ad.user_rating, // Utiliser user_rating de user_profiles
+                    ratingCount: ad.user_rating_count, // Utiliser user_rating_count de user_profiles
                 },
                 category: {
                     name: ad.category_name,
@@ -832,29 +839,30 @@ app.get('/api/ads/popular', async (req, res) => {
         // À la ligne ~1320 dans servera.js :
         const result = await pool.query(
             `SELECT 
-            a.*,
-            u.first_name,
-            u.last_name,
-            u.rating,
-            u.rating_count,
-            c.name as category_name,
-            c.slug as category_slug,
-            c.icon as category_icon,
-            c.color as category_color,
-            ai.image_url,
-            -- Vérifier si c'est déjà une URL complète
-            CASE 
-                WHEN ai.image_url LIKE 'http%' THEN ai.image_url
-                ELSE CONCAT('${baseUrl}', ai.image_url)
-            END as full_image_url
+                a.*,
+                u.first_name,
+                u.last_name,
+                up.rating as user_rating,
+                up.total_ratings as user_rating_count,
+                c.name as category_name,
+                c.slug as category_slug,
+                c.icon as category_icon,
+                c.color as category_color,
+                ai.image_url,
+                -- Vérifier si c'est déjà une URL complète
+                CASE 
+                    WHEN ai.image_url LIKE 'http%' THEN ai.image_url
+                    ELSE CONCAT('${baseUrl}', ai.image_url)
+                END as full_image_url
             FROM ads a
             LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN user_profiles up ON u.id = up.id
             LEFT JOIN categories c ON a.category_id = c.id
             LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
             WHERE a.is_active = true AND a.is_sold = false
             ORDER BY 
-            a.is_featured DESC,
-            a.created_at DESC
+                a.is_featured DESC,
+                a.created_at DESC
             LIMIT $1`,
             [limit]
         );
@@ -879,9 +887,8 @@ app.get('/api/ads/popular', async (req, res) => {
                 user: {
                     firstName: ad.first_name,
                     lastName: ad.last_name,
-                    isPremium: ad.is_premium,
-                    rating: ad.rating,
-                    ratingCount: ad.rating_count,
+                    rating: ad.user_rating, // Changé de ad.rating à ad.user_rating
+                    ratingCount: ad.user_rating_count, // Changé de ad.rating_count à ad.user_rating_count
                 },
                 category: {
                     name: ad.category_name,
@@ -2007,68 +2014,231 @@ app.get('/api/ads/search', async (req, res) => {
     }
 });
 
-// Mettre à jour le premium avec les nouveaux plans
-app.patch('/api/user/premium', authenticateToken, async (req, res) => {
+const upgradePremiumHandler = async (req, res) => {
     try {
         const {
             plan
-        } = req.body;
+        } = req.body; // 'starter', 'pro', 'entreprise'
+        const userId = req.user.userId;
 
-        if (!plan || !['starter', 'pro', 'enterprise'].includes(plan)) {
+        // Validation du plan
+        const validPlans = ['starter', 'pro', 'entreprise'];
+        if (!plan || !validPlans.includes(plan)) {
             return res.status(400).json({
                 success: false,
-                error: 'Plan invalide. Plans disponibles: starter, pro, enterprise',
+                error: 'Plan invalide. Choisissez entre: starter, pro, entreprise'
             });
         }
 
-        // Calculer la date d'expiration (30 jours pour tous les plans)
-        const endPremiumDate = new Date();
-        endPremiumDate.setDate(endPremiumDate.getDate() + 30);
-
-        // Mettre à jour l'utilisateur
-        const result = await pool.query(
-            `UPDATE users 
-       SET is_premium = true, premium_plan = $1, end_premium = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $3
-       RETURNING id, email, first_name, last_name, phone, is_verified, is_premium, premium_plan, end_premium, created_at`,
-            [plan, endPremiumDate, req.user.userId]
+        // Vérifier que l'utilisateur existe
+        const userCheck = await pool.query(
+            'SELECT id, premium_pack, premium_end_date FROM users WHERE id = $1',
+            [userId]
         );
 
-        if (result.rows.length === 0) {
+        if (userCheck.rows.length === 0) {
             return res.status(404).json({
                 success: false,
                 error: 'Utilisateur non trouvé'
             });
         }
 
-        const user = result.rows[0];
-        console.log('✅ Utilisateur passé en premium:', user.email, 'Plan:', plan);
+        const currentUser = userCheck.rows[0];
+
+        // Calculer la nouvelle date de fin (30 jours à partir d'aujourd'hui)
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 30);
+
+        // Définir le badge selon le plan
+        let badge = 'none';
+        if (plan === 'pro') {
+            badge = 'verified_seller';
+        } else if (plan === 'entreprise') {
+            badge = 'premium_business';
+        }
+
+        // Mettre à jour l'utilisateur
+        const result = await pool.query(
+            `UPDATE users 
+             SET premium_pack = $1, 
+                 premium_start_date = CURRENT_TIMESTAMP, 
+                 premium_end_date = $2,
+                 badge = $3,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4
+             RETURNING id, email, first_name, last_name, premium_pack, premium_start_date, premium_end_date, badge`,
+            [plan, endDate, badge, userId]
+        );
+
+        const updatedUser = result.rows[0];
+
+        // Si le plan est Pro, créer les crédits "À la une" gratuits
+        if (plan === 'pro') {
+            await pool.query(
+                `INSERT INTO user_featured_credits (user_id, credits_remaining, last_reset_date)
+                 VALUES ($1, 5, CURRENT_DATE)
+                 ON CONFLICT (user_id) 
+                 DO UPDATE SET credits_remaining = 5, last_reset_date = CURRENT_DATE`,
+                [userId]
+            );
+        }
+
+        // Enregistrer dans l'historique des points (optionnel)
+        await pool.query(
+            `INSERT INTO user_points_history (user_id, points, type, description)
+             VALUES ($1, 0, 'subscription', 'Souscription au pack ${plan}')`,
+            [userId]
+        );
+
+        console.log('✅ Utilisateur upgradé au pack', plan, '- ID:', userId);
 
         res.json({
             success: true,
-            message: `Abonnement premium ${plan} activé`,
+            message: `Abonnement ${plan} activé avec succès`,
             user: {
-                id: user.id,
-                email: user.email,
-                firstName: user.first_name,
-                lastName: user.last_name,
-                phone: user.phone,
-                isVerified: user.is_verified,
-                isPremium: user.is_premium,
-                premiumPlan: user.premium_plan,
-                endPremium: user.end_premium,
-                createdAt: user.created_at,
+                id: updatedUser.id,
+                email: updatedUser.email,
+                firstName: updatedUser.first_name,
+                lastName: updatedUser.last_name,
+                premiumPack: updatedUser.premium_pack,
+                premiumStartDate: updatedUser.premium_start_date,
+                premiumEndDate: updatedUser.premium_end_date,
+                badge: updatedUser.badge,
             },
+            expiresAt: endDate.toISOString(),
         });
+
     } catch (error) {
         console.error('❌ Erreur mise à jour premium:', error);
         res.status(500).json({
             success: false,
-            error: 'Erreur lors de la mise à jour du premium',
-            details: error.message,
+            error: 'Erreur lors de la mise à jour du statut premium',
+            details: error.message
+        });
+    }
+};
+
+app.patch('/api/user/premium', authenticateToken, async (req, res) => {
+    try {
+        const {
+            plan
+        } = req.body; // 'starter', 'pro', 'entreprise'
+        const userId = req.user.userId;
+
+        console.log(`🔄 Mise à jour premium demandée: ${plan} pour l'utilisateur ${userId}`);
+
+        // Validation du plan
+        const validPlans = ['starter', 'pro', 'entreprise'];
+        if (!plan || !validPlans.includes(plan)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Plan invalide. Choisissez entre: starter, pro, entreprise'
+            });
+        }
+
+        // Vérifier que l'utilisateur existe
+        const userCheck = await pool.query(
+            'SELECT id, premium_pack, premium_end_date FROM users WHERE id = $1',
+            [userId]
+        );
+
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Utilisateur non trouvé'
+            });
+        }
+
+        const currentUser = userCheck.rows[0];
+
+        // Calculer la nouvelle date de fin (30 jours à partir d'aujourd'hui)
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 30);
+
+        // Définir le badge selon le plan
+        let badge = 'none';
+        if (plan === 'pro') {
+            badge = 'verified_seller';
+        } else if (plan === 'entreprise') {
+            badge = 'premium_business';
+        }
+
+        // Mettre à jour l'utilisateur
+        const result = await pool.query(
+            `UPDATE users 
+             SET premium_pack = $1, 
+                 premium_start_date = CURRENT_TIMESTAMP, 
+                 premium_end_date = $2,
+                 badge = $3,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = $4
+             RETURNING id, email, first_name, last_name, phone, premium_pack, 
+                       premium_start_date, premium_end_date, badge`,
+            [plan, endDate, badge, userId]
+        );
+
+        const updatedUser = result.rows[0];
+
+        // Récupérer le profil utilisateur pour obtenir le rating
+        const profileResult = await pool.query(
+            'SELECT rating, total_ratings FROM user_profiles WHERE id = $1',
+            [userId]
+        );
+
+        const userProfile = profileResult.rows[0] || {
+            rating: 2.50,
+            total_ratings: 0
+        };
+
+        // Si le plan est Pro, créer les crédits "À la une" gratuits
+        if (plan === 'pro') {
+            await pool.query(
+                `INSERT INTO user_featured_credits (user_id, credits_remaining, last_reset_date)
+                 VALUES ($1, 5, CURRENT_DATE)
+                 ON CONFLICT (user_id) 
+                 DO UPDATE SET credits_remaining = 5, last_reset_date = CURRENT_DATE`,
+                [userId]
+            );
+        }
+
+        // Enregistrer dans l'historique des points
+        await pool.query(
+            `INSERT INTO user_points_history (user_id, points, type, description)
+             VALUES ($1, 0, 'subscription', 'Souscription au pack ${plan}')`,
+            [userId]
+        );
+
+        console.log('✅ Utilisateur upgradé au pack', plan, '- ID:', userId);
+
+        res.json({
+            success: true,
+            message: `Abonnement ${plan} activé avec succès`,
+            user: {
+                id: updatedUser.id,
+                email: updatedUser.email,
+                firstName: updatedUser.first_name,
+                lastName: updatedUser.last_name,
+                phone: updatedUser.phone,
+                premiumPack: updatedUser.premium_pack,
+                endPremium: updatedUser.premium_end_date,
+                badge: updatedUser.badge,
+                rating: userProfile.rating,
+                ratingCount: userProfile.total_ratings,
+                isVerified: true,
+            },
+            expiresAt: endDate.toISOString(),
+        });
+
+    } catch (error) {
+        console.error('❌ Erreur mise à jour premium:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur lors de la mise à jour du statut premium',
+            details: error.message
         });
     }
 });
+
 
 // ============================================================
 // ENDPOINTS POUR LES POINTS ET CRÉDITS
@@ -2180,7 +2350,7 @@ app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) =>
     try {
         const {
             rewardType
-        } = req.body; // 'credit_5000', 'starter_1m', 'pro_1m', 'pro_3m', 'enterprise_1m'
+        } = req.body; // 'credit_5000', 'starter_1m', 'pro_1m', 'pro_3m', 'entreprise_1m'
         const userId = req.user.userId;
 
         // Récupérer les points actuels
@@ -2222,7 +2392,7 @@ app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) =>
                     endDate.setMonth(endDate.getMonth() + 1);
                     await pool.query(
                         `UPDATE users 
-             SET is_premium = true, premium_plan = 'starter', end_premium = $1 
+             SET premium_pack = 'starter', premium_end_date = $1 
              WHERE id = $2`,
                         [endDate, userId]
                     );
@@ -2236,7 +2406,7 @@ app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) =>
                     endDate.setMonth(endDate.getMonth() + 1);
                     await pool.query(
                         `UPDATE users 
-             SET is_premium = true, premium_plan = 'pro', end_premium = $1 
+             SET premium_pack = 'pro', premium_end_date = $1 
              WHERE id = $2`,
                         [endDate, userId]
                     );
@@ -2258,7 +2428,7 @@ app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) =>
                     endDate.setMonth(endDate.getMonth() + 3);
                     await pool.query(
                         `UPDATE users 
-             SET is_premium = true, premium_plan = 'pro', end_premium = $1 
+             SET premium_pack = 'pro', premium_end_date = $1 
              WHERE id = $2`,
                         [endDate, userId]
                     );
@@ -2271,7 +2441,7 @@ app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) =>
                     );
                 };
                 break;
-            case 'enterprise_1m':
+            case 'entreprise_1m':
                 pointsRequired = 1000;
                 rewardDescription = '1 mois Pack Entreprise gratuit';
                 action = async () => {
@@ -2279,7 +2449,7 @@ app.post('/api/user/points/claim-reward', authenticateToken, async (req, res) =>
                     endDate.setMonth(endDate.getMonth() + 1);
                     await pool.query(
                         `UPDATE users 
-             SET is_premium = true, premium_plan = 'enterprise', end_premium = $1 
+             SET premium_pack = 'entreprise', premium_end_date = $1 
              WHERE id = $2`,
                         [endDate, userId]
                     );
@@ -2336,9 +2506,9 @@ app.get('/api/user/featured-credits', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.userId;
 
-        // Vérifier le plan premium
+        // Vérifier le pack premium
         const userResult = await pool.query(
-            'SELECT premium_plan FROM users WHERE id = $1',
+            'SELECT premium_pack FROM users WHERE id = $1',
             [userId]
         );
 
@@ -2349,9 +2519,9 @@ app.get('/api/user/featured-credits', authenticateToken, async (req, res) => {
             });
         }
 
-        const premiumPlan = userResult.rows[0].premium_plan;
+        const premiumPack = userResult.rows[0].premium_pack;
 
-        if (premiumPlan === 'enterprise') {
+        if (premiumPack === 'entreprise') {
             return res.json({
                 success: true,
                 creditsRemaining: 999999, // Illimité
@@ -2359,7 +2529,7 @@ app.get('/api/user/featured-credits', authenticateToken, async (req, res) => {
             });
         }
 
-        if (premiumPlan === 'pro') {
+        if (premiumPack === 'pro') {
             // Récupérer ou créer les crédits
             let creditsResult = await pool.query(
                 'SELECT * FROM user_featured_credits WHERE user_id = $1',
@@ -2404,6 +2574,7 @@ app.get('/api/user/featured-credits', authenticateToken, async (req, res) => {
             });
         }
 
+        // Pour les packs 'simple' et 'starter'
         res.json({
             success: true,
             creditsRemaining: 0,
@@ -4003,6 +4174,7 @@ app.post('/api/favorites/:adId', authenticateToken, async (req, res) => {
 });
 
 // Récupérer tous les favoris de l'utilisateur
+// Récupérer tous les favoris de l'utilisateur
 app.get('/api/favorites', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -4013,8 +4185,8 @@ app.get('/api/favorites', authenticateToken, async (req, res) => {
                 a.*,
                 u.first_name,
                 u.last_name,
-                u.rating,
-                u.rating_count,
+                up.rating as user_rating,
+                up.total_ratings as user_rating_count,
                 c.name as category_name,
                 c.slug as category_slug,
                 c.icon as category_icon,
@@ -4025,6 +4197,7 @@ app.get('/api/favorites', authenticateToken, async (req, res) => {
             FROM favorites f
             JOIN ads a ON f.ad_id = a.id
             LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN user_profiles up ON u.id = up.id
             LEFT JOIN categories c ON a.category_id = c.id
             LEFT JOIN ad_images ai ON a.id = ai.ad_id AND ai.is_primary = true
             WHERE f.user_id = $1
@@ -4050,8 +4223,8 @@ app.get('/api/favorites', authenticateToken, async (req, res) => {
             user: {
                 firstName: ad.first_name,
                 lastName: ad.last_name,
-                rating: ad.rating,
-                ratingCount: ad.rating_count,
+                rating: ad.user_rating, // Changé de ad.rating à ad.user_rating
+                ratingCount: ad.user_rating_count, // Changé de ad.rating_count à ad.user_rating_count
             },
             category: {
                 name: ad.category_name,
@@ -4116,7 +4289,7 @@ app.listen(PORT, HOST, () => {
     // Détecter l'IP automatiquement si possible
     const os = require('os');
     const networkInterfaces = os.networkInterfaces();
-    let detectedIP = '192.168.88.251'; // IP par défaut
+    let detectedIP = '192.168.43.213'; // IP par défaut
 
     // Chercher une IP locale
     for (const interfaceName in networkInterfaces) {
@@ -4127,7 +4300,7 @@ app.listen(PORT, HOST, () => {
                 break;
             }
         }
-        if (detectedIP !== '192.168.88.251') break;
+        if (detectedIP !== '192.168.43.213') break;
     }
 
     console.log(`📱 Mobile: http://${detectedIP}:${PORT}`);
@@ -4145,3 +4318,33 @@ app.listen(PORT, HOST, () => {
     console.log('📁 Dossier uploads:', path.join(__dirname, 'uploads'));
     console.log('='.repeat(60));
 });
+
+function listRoutes(app) {
+    const routes = [];
+
+    app._router.stack.forEach((middleware) => {
+        if (middleware.route) { // routes registered directly on the app
+            routes.push({
+                path: middleware.route.path,
+                methods: Object.keys(middleware.route.methods)
+            });
+        } else if (middleware.name === 'router') { // router middleware
+            middleware.handle.stack.forEach((handler) => {
+                if (handler.route) {
+                    routes.push({
+                        path: handler.route.path,
+                        methods: Object.keys(handler.route.methods)
+                    });
+                }
+            });
+        }
+    });
+
+    console.log('📋 Routes disponibles:');
+    routes.forEach(route => {
+        console.log(`${route.methods.join(', ').toUpperCase()} ${route.path}`);
+    });
+}
+
+// Appelez cette fonction après avoir défini toutes vos routes
+listRoutes(app);

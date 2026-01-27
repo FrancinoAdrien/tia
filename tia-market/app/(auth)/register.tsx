@@ -82,7 +82,7 @@ export default function RegisterScreen() {
       if (errorMessage.includes('Email déjà utilisé')) {
         errorMessage = 'Cet email est déjà utilisé. Essayez de vous connecter ou utilisez un autre email.';
       } else if (errorMessage.includes('Network Error') || errorMessage.includes('Pas de réponse')) {
-        errorMessage = 'Impossible de se connecter au serveur.\n\nVérifiez que:\n• Le backend est démarré\n• Votre téléphone est sur le même WiFi que l\'ordinateur\n• L\'adresse IP est correcte (192.168.88.251)';
+        errorMessage = 'Impossible de se connecter au serveur.\n\nVérifiez que:\n• Le backend est démarré\n• Votre téléphone est sur le même WiFi que l\'ordinateur\n• L\'adresse IP est correcte (192.168.43.213)';
       }
       
       Alert.alert('Erreur d\'inscription', errorMessage);
@@ -118,7 +118,7 @@ export default function RegisterScreen() {
           <Text style={styles.title}>Créer un compte</Text>
           <Text style={styles.subtitle}>Rejoignez TIA Market</Text>
           <Text style={styles.serverInfo}>
-            Serveur: 192.168.88.251:3001
+            Serveur: 192.168.43.213:3001
           </Text>
         </View>
 

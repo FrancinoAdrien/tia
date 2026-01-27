@@ -44,7 +44,11 @@ const PREMIUM_OPTIONS = [
 
 export default function PremiumFeaturesScreen() {
   const { userInfo } = useContext(AuthContext);
+  
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const isPremium = userInfo?.premiumPack && userInfo.premiumPack !== 'simple';
+  const premiumPlan = userInfo?.premiumPack || 'simple';
 
   const formatExpiryDate = (date: string | undefined) => {
     if (!date) return 'Date non disponible';
@@ -74,7 +78,9 @@ export default function PremiumFeaturesScreen() {
             <Icon name="crown" size={32} color="#FFD700" />
           </View>
 
-          <Text style={styles.statusTitle}>Compte Premium Actif</Text>
+          <Text style={styles.statusTitle}>
+            {premiumPlan === 'simple' ? 'Compte Standard' : `Compte ${premiumPlan.charAt(0).toUpperCase() + premiumPlan.slice(1)}`}
+          </Text>
 
           <View style={styles.statusDetails}>
             <View style={styles.statusRow}>

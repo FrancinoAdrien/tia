@@ -63,7 +63,7 @@ const getSafeImageUrl = (imagePath: string | undefined | null): string => {
   }
   
   // Si c'est un chemin relatif
-  const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.88.251:3001';
+  const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.43.213:3001';
   
   if (imagePath.startsWith('/')) {
     return `${API_BASE_URL}${imagePath}`;

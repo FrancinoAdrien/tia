@@ -12,7 +12,7 @@ export interface User {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
-  isPremium?: boolean;
+  premiumPack?: 'simple' | 'starter' | 'pro' | 'entreprise';
   endPremium?: string;
 }
 

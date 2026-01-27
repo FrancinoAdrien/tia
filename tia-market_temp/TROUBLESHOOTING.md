@@ -15,7 +15,7 @@ Vous devriez voir :
 🚀 BACKEND TIA MARKET DÉMARRÉ
 📡 Serveur: http://0.0.0.0:3001
 💻 Local: http://localhost:3001
-📱 Mobile: http://192.168.88.251:3001
+📱 Mobile: http://192.168.43.213:3001
 ```
 
 #### 2. Vérifier votre IP actuelle
@@ -31,12 +31,12 @@ ifconfig | grep "inet "
 
 **Important** : Si votre IP a changé, mettez à jour `tia-market/utils/config.ts` :
 ```typescript
-const YOUR_COMPUTER_IP = 'VOTRE_NOUVELLE_IP'; // Ex: '192.168.88.251'
+const YOUR_COMPUTER_IP = 'VOTRE_NOUVELLE_IP'; // Ex: '192.168.43.213'
 ```
 
 #### 3. Tester la connexion depuis votre téléphone
 1. Ouvrez Chrome sur votre téléphone
-2. Allez à : `http://192.168.88.251:3001/api/test`
+2. Allez à : `http://192.168.43.213:3001/api/test`
 3. Si ça fonctionne → Le problème est dans le code de l'app
 4. Si ça ne fonctionne pas → Continuez avec les étapes suivantes
 
@@ -116,6 +116,6 @@ L'app affiche maintenant des messages de diagnostic détaillés dans la console.
 2. Vérifiez les logs de l'app Expo
 3. Testez avec Postman ou curl :
    ```bash
-   curl http://192.168.88.251:3001/api/test
+   curl http://192.168.43.213:3001/api/test
    ```
 4. Essayez de vous connecter depuis un autre appareil sur le même réseau

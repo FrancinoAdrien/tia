@@ -42,7 +42,7 @@ api.interceptors.response.use(
       console.error('   2. Le serveur écoute-t-il sur 0.0.0.0:3001?');
       console.error('   3. Êtes-vous sur le même réseau WiFi?');
       console.error('   4. Le pare-feu Windows bloque-t-il le port 3001?');
-      console.error(`   5. Testez dans Chrome: http://192.168.88.251:3001/api/test`);
+      console.error(`   5. Testez dans Chrome: http://192.168.43.213:3001/api/test`);
     } else {
       console.error('❌ Erreur de configuration:', error.message);
     }
@@ -77,11 +77,14 @@ export interface User {
   phone?: string;
   isVerified: boolean;
   createdAt: string;
-  isPremium?: boolean;
-  premiumPlan?: 'starter' | 'pro' | 'enterprise';
+  premiumPack?: 'simple' | 'starter' | 'pro' | 'entreprise';
   endPremium?: string;
   rating?: number;
   ratingCount?: number;
+  city?: string;
+  avatarUrl?: string;
+  bio?: string;
+  userRating?: number;
 }
 
 export interface Wallet {
@@ -115,7 +118,21 @@ export interface RegisterData {
 
 export interface AuthResponse {
   token: string;
-  user: User;
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    phone?: string;
+    premiumPack?: 'simple' | 'starter' | 'pro' | 'entreprise';
+    isVerified: boolean;
+    createdAt: string;
+    // Ajouter les autres champs du profil
+    city?: string;
+    avatarUrl?: string;
+    bio?: string;
+    userRating?: number;
+  };
 }
 
 export interface Ad {
@@ -956,7 +973,10 @@ export const locationApi = {
 
   upgradeToPremium: async (plan: 'starter' | 'pro' | 'enterprise'): Promise<{ success: boolean; user?: User; error?: string }> => {
     try {
-      const response = await api.patch('/user/premium', { plan });
+      const mappedPlan = plan === 'enterprise' ? 'entreprise' : plan;
+      
+      // CORRECTION: Utilisez la bonne route '/api/user/premium' avec PATCH
+      const response = await api.patch('/user/premium', { plan: mappedPlan });
       return response.data;
     } catch (error: any) {
       console.error('❌ Erreur mise à jour premium:', error);
